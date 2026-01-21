@@ -5,12 +5,13 @@ from collections import deque
 from game import SnakeGame, Direction, Point
 from model import Linear_QNet, QTrainer
 from helper import plot
+from pathfinding import a_star_search
 import time
 
 MAX_MEMORY = 100_000
 BATCH_SIZE = 1000
-LR = 0.001
-SIMULATION_BATCH_SIZE = 100  # Nombre de jeux en parallèle pour accélérer la collecte de données
+LR = 0.01
+SIMULATION_BATCH_SIZE = 10  # Nombre de jeux en parallèle pour accélérer la collecte de données
 
 class Agent:
 
@@ -19,8 +20,12 @@ class Agent:
         self.epsilon = 0 # Randomness
         self.gamma = 0.9 # Discount rate
         self.memory = deque(maxlen=MAX_MEMORY) # popleft()
-        self.model = Linear_QNet(11, 512, 256, 3)
-        self.trainer = QTrainer(self.model, lr=LR, gamma=self.gamma)
+        
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Using device: {self.device}")
+        
+        self.model = Linear_QNet(11, 512, 256, 3).to(self.device)
+        self.trainer = QTrainer(self.model, lr=LR, gamma=self.gamma, device=self.device)
 
     def get_state(self, game):
         head = game.snake[0]
@@ -83,41 +88,103 @@ class Agent:
     def train_short_memory(self, state, action, reward, next_state, done):
         self.trainer.train_step(state, action, reward, next_state, done)
 
-    def get_action(self, state):
+    def get_action(self, game):
         # random moves: tradeoff exploration / exploitation
         self.epsilon = 80 - self.n_games
         final_move = [0,0,0]
+        
+        # Guided Exploration: Use A* instead of random if possible
         if random.randint(0, 200) < self.epsilon:
-            move = random.randint(0, 2)
-            final_move[move] = 1
+            path = a_star_search(game)
+            if path and len(path) > 1:
+                # Calculer le mouvement basé sur le prochain point du chemin
+                next_point = path[1] # path[0] est la tête actuelle
+                
+                # Déterminer la direction relative
+                move_x = next_point.x - game.head.x
+                move_y = next_point.y - game.head.y
+                
+                # Convertir en [straight, right, left]
+                clock_wise = [Direction.RIGHT, Direction.DOWN, Direction.LEFT, Direction.UP]
+                idx = clock_wise.index(game.direction)
+                
+                if move_x == 20: # Right
+                    target_dir = Direction.RIGHT
+                elif move_x == -20: # Left
+                    target_dir = Direction.LEFT
+                elif move_y == 20: # Down
+                    target_dir = Direction.DOWN
+                else: # Up
+                    target_dir = Direction.UP
+                    
+                target_idx = clock_wise.index(target_dir)
+                
+                if target_idx == idx:
+                    final_move = [1, 0, 0]
+                elif target_idx == (idx + 1) % 4:
+                    final_move = [0, 1, 0]
+                else:
+                    final_move = [0, 0, 1]
+            else:
+                # Si A* échoue (pas de chemin), mouvement aléatoire
+                move = random.randint(0, 2)
+                final_move[move] = 1
         else:
-            state0 = torch.tensor(state, dtype=torch.float)
+            state0 = torch.tensor(self.get_state(game), dtype=torch.float).to(self.device)
             prediction = self.model(state0)
             move = torch.argmax(prediction).item()
             final_move[move] = 1
 
         return final_move
 
-    def get_actions_batch(self, states):
+    def get_actions_batch(self, games):
         """
-        Calculer les actions pour plusieurs états en une seule passe GPU/CPU.
+        Calculer les actions pour plusieurs jeux en une seule passe GPU/CPU.
         """
         # random moves: tradeoff exploration / exploitation
         epsilon = 80 - self.n_games
         final_moves = []
         
-        # Convertir la liste de numpy arrays en un seul tenseur
-        states_tensor = torch.tensor(np.array(states), dtype=torch.float)
+        # Récupérer les états de tous les jeux
+        states = [self.get_state(g) for g in games]
         
-        # Prédiction par lot
+        # Convertir la liste de numpy arrays en un seul tenseur sur le device
+        states_tensor = torch.tensor(np.array(states), dtype=torch.float).to(self.device)
+        
+        # Prédiction par lot (pour l'exploitation)
+        # On calcule tout le temps, c'est rapide sur GPU, même si on utilise A* pour certains
         with torch.no_grad():
             predictions = self.model(states_tensor)
         
-        for i in range(len(states)):
+        for i, game in enumerate(games):
             final_move = [0, 0, 0]
+            
+            # Guided Exploration avec A*
             if random.randint(0, 200) < epsilon:
-                move = random.randint(0, 2)
-                final_move[move] = 1
+                path = a_star_search(game)
+                if path and len(path) > 1:
+                    # Logique de conversion Point -> [1,0,0] (Même que get_action)
+                    next_point = path[1]
+                    move_x = next_point.x - game.head.x
+                    move_y = next_point.y - game.head.y
+                    
+                    clock_wise = [Direction.RIGHT, Direction.DOWN, Direction.LEFT, Direction.UP]
+                    idx = clock_wise.index(game.direction)
+                    
+                    if move_x == 20: target_dir = Direction.RIGHT
+                    elif move_x == -20: target_dir = Direction.LEFT
+                    elif move_y == 20: target_dir = Direction.DOWN
+                    else: target_dir = Direction.UP
+                        
+                    target_idx = clock_wise.index(target_dir)
+                    
+                    if target_idx == idx: final_move = [1, 0, 0]
+                    elif target_idx == (idx + 1) % 4: final_move = [0, 1, 0]
+                    else: final_move = [0, 0, 1]
+                else:
+                    # Fallback random
+                    move = random.randint(0, 2)
+                    final_move[move] = 1
             else:
                 move = torch.argmax(predictions[i]).item()
                 final_move[move] = 1
@@ -146,7 +213,8 @@ def train():
     print("Début de l'entraînement...")
     while True:
         # Obtenir les actions pour tous les jeux en une fois
-        final_moves = agent.get_actions_batch(current_states)
+        # Note: on passe 'games' entier maintenant, pas juste les states, car A* a besoin du game object
+        final_moves = agent.get_actions_batch(games)
         
         new_states = []
         

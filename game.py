@@ -17,7 +17,7 @@ pygame.init()
 
 BLOCK_SIZE = 20
 FPS = 60  # Taux de rafraîchissement visuel (fluidité de l'affichage)
-GAME_SPEED = 10  # Vitesse du serpent (mouvements par seconde)
+GAME_SPEED = 60  # Vitesse du serpent (mouvements par seconde)
 
 # Couleurs
 WHITE = (255, 255, 255)
