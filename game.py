@@ -1,5 +1,5 @@
 """
-Snake Game - Conçu pour l'intégration future d'une IA par renforcement
+Snake Game - Conçu pour l'integration future d'une IA par renforcement
 """
 
 import pygame
@@ -12,7 +12,7 @@ from collections import namedtuple
 pygame.init()
 
 # ============================================================================
-# CONFIGURATION
+# CONFIGURATION 
 # ============================================================================
 
 BLOCK_SIZE = 20
