@@ -62,20 +62,26 @@ class SnakeGame:
     - Reset facile avec `reset()`
     """
     
-    def __init__(self, width=640, height=480):
+    def __init__(self, width=640, height=480, render_mode=True):
         """
         Initialise le jeu Snake.
         
         Args:
             width: Largeur de la fenêtre en pixels
             height: Hauteur de la fenêtre en pixels
+            render_mode: Si True, affiche le jeu. Si False, mode "headless" pour l'entraînement rapide.
         """
         self.width = width
         self.height = height
+        self.render_mode = render_mode
         
         # Configuration de l'affichage
-        self.display = pygame.display.set_mode((self.width, self.height))
-        pygame.display.set_caption('Snake Game - RL Ready')
+        if self.render_mode:
+            self.display = pygame.display.set_mode((self.width, self.height))
+            pygame.display.set_caption('Snake Game - RL Ready')
+        else:
+            self.display = None
+            
         self.clock = pygame.time.Clock()
         
         # Initialisation du jeu
@@ -91,6 +97,7 @@ class SnakeGame:
         """
         # Direction initiale
         self.direction = Direction.RIGHT
+        self._head_direction = Direction.RIGHT
         
         # Position initiale du serpent (au centre)
         self.head = Point(self.width // 2, self.height // 2)
@@ -225,24 +232,25 @@ class SnakeGame:
                 - game_over: True si la partie est terminée
                 - score: Score actuel
         """
-        # 1. Collecter les entrées utilisateur (à chaque frame pour réactivité)
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                quit()
-            if event.type == pygame.KEYDOWN and action is None:
-                if event.key == pygame.K_LEFT:
-                    if self.direction != Direction.RIGHT:
-                        self.direction = Direction.LEFT
-                elif event.key == pygame.K_RIGHT:
-                    if self.direction != Direction.LEFT:
-                        self.direction = Direction.RIGHT
-                elif event.key == pygame.K_UP:
-                    if self.direction != Direction.DOWN:
-                        self.direction = Direction.UP
-                elif event.key == pygame.K_DOWN:
-                    if self.direction != Direction.UP:
-                        self.direction = Direction.DOWN
+        # 1. Collecter les entrées utilisateur (seulement si affichage activé)
+        if self.render_mode:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    quit()
+                if event.type == pygame.KEYDOWN and action is None:
+                    if event.key == pygame.K_LEFT:
+                        if self._head_direction != Direction.RIGHT:
+                            self.direction = Direction.LEFT
+                    elif event.key == pygame.K_RIGHT:
+                        if self._head_direction != Direction.LEFT:
+                            self.direction = Direction.RIGHT
+                    elif event.key == pygame.K_UP:
+                        if self._head_direction != Direction.DOWN:
+                            self.direction = Direction.UP
+                    elif event.key == pygame.K_DOWN:
+                        if self._head_direction != Direction.UP:
+                            self.direction = Direction.DOWN
         
         # Incrémenter le compteur de mouvement
         self.move_counter += 1
@@ -265,7 +273,7 @@ class SnakeGame:
             
             # 4. Vérifier game over
             # Collision ou trop de frames sans manger (évite les boucles infinies)
-            if self._is_collision() or self.frame_iteration > 100 * len(self.snake):
+            if self._is_collision() or (action is not None and self.frame_iteration > 100 * len(self.snake)):
                 game_over = True
                 reward = -10
                 return reward, game_over, self.score
@@ -278,10 +286,14 @@ class SnakeGame:
             else:
                 # Retirer la queue (le serpent ne grandit pas)
                 self.snake.pop()
+                # Récompense légèrement négative à chaque pas pour encourager la rapidité
+                reward = -0.1
         
         # 6. Mise à jour de l'affichage (à chaque frame pour fluidité)
-        self._update_ui()
-        self.clock.tick(FPS)
+        # 6. Mise à jour de l'affichage (à chaque frame pour fluidité)
+        if self.render_mode:
+            self._update_ui()
+            self.clock.tick(FPS)
         
         return reward, game_over, self.score
     
@@ -312,6 +324,7 @@ class SnakeGame:
     
     def _move(self):
         """Met à jour la position de la tête selon la direction."""
+        self._head_direction = self.direction
         x = self.head.x
         y = self.head.y
         
@@ -360,6 +373,9 @@ class SnakeGame:
     
     def show_game_over(self):
         """Affiche l'écran de game over."""
+        if not self.render_mode:
+            return
+            
         self.display.fill(BLACK)
         
         # Texte Game Over
