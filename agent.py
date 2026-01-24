@@ -31,11 +31,11 @@ def log(message):
 # CONFIGURATION
 # ============================================================================
 N_ENVS = 1000
-BATCH_SIZE = 128
+BATCH_SIZE = 256
 MAX_MEMORY = 200_000
 LR = 0.0001
 GAMMA = 0.99
-TRAIN_EVERY = 1
+TRAIN_EVERY = 8
 
 # PER Hyperparamètres
 PER_ALPHA = 0.6  # Degré de priorisation (0=uniforme, 1=full priorité)
@@ -261,11 +261,11 @@ class VectorRenderWrapper:
 class VectorAgent:
     def __init__(self):
         self.n_games = 0
-        self.epsilon = (
-            0.3  # Réduit de 1.0 à 0.3 (moins d'imitation du Greedy défectueux)
-        )
+        self.epsilon = 1.0  # 100% imitation au début (phase d'apprentissage)
         self.epsilon_min = 0.05
-        self.epsilon_decay = 0.999  # Décroissance plus rapide
+        self.epsilon_decay = (
+            0.9995  # Décroissance LENTE pour laisser le temps d'apprendre
+        )
 
         # Epsilon Kicker
         self.stagnation_counter = 0
@@ -455,11 +455,12 @@ def train_vectorized():
         greedy_actions = env.get_greedy_actions()
         final_moves = np.where(imitation_mask, greedy_actions, model_actions)
 
-        # Injection de bruit aléatoire (5%)
+        # Injection de bruit aléatoire SÛR (5%) - Exploration sans suicide
         pure_random_mask = np.random.random(N_ENVS) < 0.05
         if np.any(pure_random_mask):
-            random_moves = np.random.randint(0, 3, size=N_ENVS)
-            final_moves = np.where(pure_random_mask, random_moves, final_moves)
+            # Récupérer les actions sûres pour chaque environnement
+            safe_random_actions = env.get_safe_random_actions()
+            final_moves = np.where(pure_random_mask, safe_random_actions, final_moves)
 
         # --- Physique ---
         next_states, rewards, dones, scores = env.step(final_moves)

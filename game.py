@@ -626,7 +626,7 @@ class VectorizedSnakeEnv:
             vecs = self.move_vecs[potential_dirs]
             next_heads = self.heads + vecs
 
-            # Check collisions
+            # Check collisions murs
             hit_wall = (
                 (next_heads[:, 0] < 0)
                 | (next_heads[:, 0] >= self.grid_w)
@@ -634,9 +634,17 @@ class VectorizedSnakeEnv:
                 | (next_heads[:, 1] >= self.grid_h)
             )
 
-            body_hits = np.any(
-                np.all(self.bodies == next_heads[:, np.newaxis, :], axis=2), axis=1
-            )
+            # Check collisions corps (exclure la queue qui va bouger, et les cases -1)
+            body_hits = np.zeros(self.n_envs, dtype=bool)
+            for i in range(self.n_envs):
+                head = next_heads[i]
+                # Exclure la dernière case (queue) car elle va se libérer
+                length = self.lengths[i]
+                body_part = self.bodies[i, : length - 1]
+                # Vérifier collision avec le corps valide
+                if np.any(np.all(head == body_part, axis=1)):
+                    body_hits[i] = True
+
             is_safe = ~hit_wall & ~body_hits
 
             safe_mask[:, action] = is_safe
@@ -663,6 +671,47 @@ class VectorizedSnakeEnv:
                     best_actions[i] = np.random.randint(0, 3)  # Mort inévitable
 
         return best_actions
+
+    def get_safe_random_actions(self):
+        """Retourne des actions aléatoires SÛRES (pas de suicide)."""
+        safe_mask = np.zeros((self.n_envs, 3), dtype=bool)
+
+        for action in [0, 1, 2]:
+            shift = 0 if action == 0 else (1 if action == 1 else -1)
+            potential_dirs = (self.dirs + shift) % 4
+            vecs = self.move_vecs[potential_dirs]
+            next_heads = self.heads + vecs
+
+            # Check collisions murs
+            hit_wall = (
+                (next_heads[:, 0] < 0)
+                | (next_heads[:, 0] >= self.grid_w)
+                | (next_heads[:, 1] < 0)
+                | (next_heads[:, 1] >= self.grid_h)
+            )
+
+            # Check collisions corps
+            body_hits = np.zeros(self.n_envs, dtype=bool)
+            for i in range(self.n_envs):
+                head = next_heads[i]
+                length = self.lengths[i]
+                body_part = self.bodies[i, : length - 1]
+                if np.any(np.all(head == body_part, axis=1)):
+                    body_hits[i] = True
+
+            is_safe = ~hit_wall & ~body_hits
+            safe_mask[:, action] = is_safe
+
+        # Choisir une action aléatoire parmi les actions sûres
+        random_actions = np.zeros(self.n_envs, dtype=np.int32)
+        for i in range(self.n_envs):
+            safe_acts = np.where(safe_mask[i])[0]
+            if len(safe_acts) > 0:
+                random_actions[i] = np.random.choice(safe_acts)
+            else:
+                random_actions[i] = np.random.randint(0, 3)  # Mort inévitable
+
+        return random_actions
 
 
 if __name__ == "__main__":
