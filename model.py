@@ -8,139 +8,108 @@ import numpy as np
 import copy
 
 # ============================================================================
-# ARCHITECTURES NEURONALES
+# CERVEAU DU SERPENT (RÉSEAUX DE NEURONES)
 # ============================================================================
 
 
-class Linear_QNet(nn.Module):
-    """Réseau de neurones dense simple (MLP)."""
-
-    def __init__(self, input_size, hidden_size1, hidden_size2, output_size):
-        super().__init__()
-        self.linear1 = nn.Linear(input_size, hidden_size1)
-        self.linear2 = nn.Linear(hidden_size1, hidden_size2)
-        self.linear3 = nn.Linear(hidden_size2, output_size)
-
-    def forward(self, x):
-        x = F.relu(self.linear1(x))
-        x = F.relu(self.linear2(x))
-        x = self.linear3(x)
-        return x
-
-    def get_activations(self, x):
-        """Retourne les activations pour la visualisation."""
-        if len(x.shape) == 1:
-            x = torch.unsqueeze(x, 0)
-
-        activations = [x]
-        x1 = F.relu(self.linear1(x))
-        activations.append(x1)
-        x2 = F.relu(self.linear2(x1))
-        activations.append(x2)
-        x3 = self.linear3(x2)
-        activations.append(x3)
-        return activations
-
-    def save(self, file_name="model.pth"):
-        model_folder_path = "./model"
-        if not os.path.exists(model_folder_path):
-            os.makedirs(model_folder_path)
-
-        file_name = os.path.join(model_folder_path, file_name)
-        if not file_name.endswith(".pth"):
-            file_name += ".pth"
-        torch.save(self.state_dict(), file_name)
-
-
-class ConvNet_QNet(nn.Module):
+class ReseauNeurones(nn.Module):
     """
-    CNN amélioré pour le Snake :
-    - 3 couches convolutives avec BatchNorm
-    - Dropout pour régularisation
-    - Architecture conçue pour limiter le sous-apprentissage
+    Le cerveau du serpent
     """
 
     def __init__(self, output_size=3, input_channels=4):
         super().__init__()
-        # Input: (4, 24, 32) (C, H, W) - 4 canaux: Corps, Tête, Nourriture, Murs
+        # On a 4 "images" en entrée : Corps, Tête, Pomme, Murs
+        # Taille 24x32
 
-        # Conv 1: 4 -> 32 canaux. Résolution conservée.
+        # Couche 1: On cherche des formes simples
         self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(32)
 
-        # Conv 2: 32 -> 64 canaux. Downsample (24x32 -> 12x16).
+        # Couche 2: On combine les formes (et on réduit la taille de l'image)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1)
         self.bn2 = nn.BatchNorm2d(64)
 
-        # Conv 3: 64 -> 128 canaux. Downsample (12x16 -> 6x8).
+        # Couche 3: Des concepts plus abstraits
         self.conv3 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1)
         self.bn3 = nn.BatchNorm2d(128)
 
-        # Fully Connected (Flatten: 128 * 6 * 8 = 6144)
+        # On met tout à plat pour la décision finale
+        # Calcul taille: 128 filtres * 6 hauteur * 8 largeur = 6144
         self.fc1 = nn.Linear(6144, 512)
-        self.dropout = nn.Dropout(0.2)
+        self.dropout = nn.Dropout(0.2)  # Pour éviter d'apprendre par cœur
         self.fc2 = nn.Linear(512, 128)
-        self.fc3 = nn.Linear(128, output_size)
+        self.decision = nn.Linear(128, output_size)
 
     def forward(self, x):
         x = F.relu(self.bn1(self.conv1(x)))
         x = F.relu(self.bn2(self.conv2(x)))
         x = F.relu(self.bn3(self.conv3(x)))
 
-        x = x.view(x.size(0), -1)
+        x = x.view(x.size(0), -1)  # Aplatissement
 
         x = F.relu(self.fc1(x))
         x = self.dropout(x)
         x = F.relu(self.fc2(x))
-        x = self.fc3(x)
+        x = self.decision(x)
         return x
 
-    def get_activations(self, x):
-        """Pour visualisation uniquement."""
+    def recuperer_activations(self, x):
+        """affichage graphique."""
         if len(x.shape) == 3:
             x = torch.unsqueeze(x, 0)
         return [x]
 
-    def save(
+    def sauvegarder(
         self,
-        file_name="model.pth",
-        n_games=0,
-        total_time=0,
-        optimizer_state=None,
+        nom_fichier="modele.pth",
+        nb_parties=0,
+        temps_total=0,
+        etat_optimiseur=None,
         epsilon=None,
         record=0,
     ):
-        model_folder_path = "./model"
-        if not os.path.exists(model_folder_path):
-            os.makedirs(model_folder_path)
+        dossier = "./model"
+        if not os.path.exists(dossier):
+            os.makedirs(dossier)
 
-        file_name = os.path.join(model_folder_path, file_name)
-        if not file_name.endswith(".pth"):
-            file_name += ".pth"
+        chemin = os.path.join(dossier, nom_fichier)
+        if not chemin.endswith(".pth"):
+            chemin += ".pth"
 
-        data = {
-            "model_state": self.state_dict(),
-            "n_games": n_games,
-            "total_time": total_time,
-            "optimizer_state": optimizer_state,
+        donnees = {
+            "etat_modele": self.state_dict(),
+            "nb_parties": nb_parties,
+            "temps_total": temps_total,
+            "etat_optimiseur": etat_optimiseur,
             "epsilon": epsilon,
             "record": record,
         }
         try:
-            torch.save(data, file_name)
+            torch.save(donnees, chemin)
         except Exception as e:
-            print(f"❌ Erreur lors de la sauvegarde du modèle : {e}")
+            print(f"erreur de sauvegarde : {e}")
 
-    def load(self, file_name="model.pth", device="cpu"):
-        model_folder_path = "./model"
-        file_path = os.path.join(model_folder_path, file_name)
+    def charger(self, nom_fichier="modele.pth", device="cpu"):
+        dossier = "./model"
+        chemin = os.path.join(dossier, nom_fichier)
 
-        if os.path.exists(file_path):
+        if os.path.exists(chemin):
             try:
-                checkpoint = torch.load(file_path, map_location=device)
+                checkpoint = torch.load(chemin, map_location=device)
 
-                # Format dictionnaire complet
-                if isinstance(checkpoint, dict) and "model_state" in checkpoint:
+                # Si c'est notre nouveau format
+                if isinstance(checkpoint, dict) and "etat_modele" in checkpoint:
+                    self.load_state_dict(checkpoint["etat_modele"])
+                    return (
+                        checkpoint.get("nb_parties", 0),
+                        checkpoint.get("temps_total", 0),
+                        checkpoint.get("etat_optimiseur", None),
+                        checkpoint.get("epsilon", None),
+                        checkpoint.get("record", 0),
+                    )
+                # Compatibilité avec les anciens modèles (anglais/legacy)
+                elif isinstance(checkpoint, dict) and "model_state" in checkpoint:
                     self.load_state_dict(checkpoint["model_state"])
                     return (
                         checkpoint.get("n_games", 0),
@@ -150,47 +119,43 @@ class ConvNet_QNet(nn.Module):
                         checkpoint.get("record", 0),
                     )
                 else:
-                    # Format legacy
+                    # Vieux format brut
                     self.load_state_dict(checkpoint)
                     return 0, 0, None, None, 0
             except Exception as e:
-                print(f"Erreur chargement modèle: {e}")
+                print(f"Erreur chargement : {e}")
                 return None
         return None
 
 
 # ============================================================================
-# ENTRAÎNEUR (Q-LEARNING)
+# COACH (ENTRAÎNEMENT)
 # ============================================================================
 
 
-class QTrainer:
+class Entraineur:
     """
-    Entraîneur DQN avec :
-    - Double DQN (Target Network)
-    - Huber Loss (Robustesse)
-    - Planning de taux d'apprentissage (Scheduler)
-    - Gradient Clipping
+    C'est lui qui apprend au modèle.
     """
 
-    def __init__(self, model, lr, gamma, device="cpu", tau=0.005):
+    def __init__(self, modele, lr, gamma, device="cpu", tau=0.005):
         self.lr = lr
         self.gamma = gamma
-        self.model = model
-        self.tau = tau  # Facteur Soft Update
+        self.modele = modele
+        self.tau = tau  # Vitesse de mise à jour du modèle cible
         self.device = device
 
-        # Target Network (Évaluation)
-        self.target_model = copy.deepcopy(model).to(device)
+        # On crée une copie du modèle pour stabiliser l'apprentissage
+        self.target_model = copy.deepcopy(modele).to(device)
         self.target_model.eval()
 
-        self.optimizer = optim.Adam(model.parameters(), lr=self.lr)
+        self.optimiseur = optim.Adam(modele.parameters(), lr=self.lr)
 
-        # Huber Loss (SmoothL1Loss)
-        self.criterion = nn.SmoothL1Loss()
+        # On utilise Huber Loss parce que c'est moins sensible aux gros bugs de valeurs
+        self.critere = nn.SmoothL1Loss()
 
         self.scheduler = ReduceLROnPlateau(
-            self.optimizer,
+            self.optimiseur,
             mode="max",
             factor=0.5,
             patience=100,
@@ -198,76 +163,78 @@ class QTrainer:
             verbose=True,
         )
 
-    def soft_update(self):
+    def mise_a_jour_douce(self):
         """Mise à jour progressive du Target Network."""
         for target_param, local_param in zip(
-            self.target_model.parameters(), self.model.parameters()
+            self.target_model.parameters(), self.modele.parameters()
         ):
             target_param.data.copy_(
                 self.tau * local_param.data + (1.0 - self.tau) * target_param.data
             )
 
-    def train_step(self, state, action, reward, next_state, done, weights=None):
-        # Conversion Vectorisée
-        state = torch.tensor(np.array(state), dtype=torch.float).to(self.device)
-        next_state = torch.tensor(np.array(next_state), dtype=torch.float).to(
+    def etape_d_apprentissage(
+        self, etat, action, recompense, etat_suiv, finis, weights=None
+    ):
+        # On transforme tout en tenseurs PyTorch
+        etat = torch.tensor(np.array(etat), dtype=torch.float).to(self.device)
+        etat_suiv = torch.tensor(np.array(etat_suiv), dtype=torch.float).to(self.device)
+        action = torch.tensor(np.array(action), dtype=torch.long).to(self.device)
+        recompense = torch.tensor(np.array(recompense), dtype=torch.float).to(
             self.device
         )
-        action = torch.tensor(np.array(action), dtype=torch.long).to(self.device)
-        reward = torch.tensor(np.array(reward), dtype=torch.float).to(self.device)
 
         if weights is not None:
             weights = torch.tensor(weights, dtype=torch.float).to(self.device)
 
-        # Ajout dimension Batch si nécessaire
-        if len(state.shape) == 1 or len(state.shape) == 3:
-            state = torch.unsqueeze(state, 0)
-            next_state = torch.unsqueeze(next_state, 0)
+        # On s'assure qu'on a bien une dimension "batch"
+        if len(etat.shape) == 1 or len(etat.shape) == 3:
+            etat = torch.unsqueeze(etat, 0)
+            etat_suiv = torch.unsqueeze(etat_suiv, 0)
             action = torch.unsqueeze(action, 0)
-            reward = torch.unsqueeze(reward, 0)
-            done = (done,)
+            recompense = torch.unsqueeze(recompense, 0)
+            finis = (finis,)
             if weights is not None:
                 weights = torch.unsqueeze(weights, 0)
 
-        # 1. Prédiction Q(s, a)
-        pred = self.model(state)
+        # 1. Qu'est-ce que le modèle pense ?
+        pred = self.modele(etat)
 
-        # 2. Target Q(s', a') via Target Network
+        # 2. Qu'est-ce qu'il devrait penser ? (Target)
         with torch.no_grad():
-            next_pred = self.target_model(next_state)
+            next_pred = self.target_model(etat_suiv)
 
         target = pred.clone()
-        td_errors = []
+        erreurs_td = []
 
-        for idx in range(len(done)):
-            Q_new = reward[idx]
-            if not done[idx]:
-                Q_new = reward[idx] + self.gamma * torch.max(next_pred[idx])
+        for idx in range(len(finis)):
+            Q_nouveau = recompense[idx]
+            if not finis[idx]:
+                Q_nouveau = recompense[idx] + self.gamma * torch.max(next_pred[idx])
 
-            current_val = pred[idx][torch.argmax(action[idx]).item()]
+            valeur_actuelle = pred[idx][torch.argmax(action[idx]).item()]
 
-            # TD Error
-            td_error = abs(Q_new - current_val).item()
-            td_errors.append(td_error)
+            # Calcul de l'erreur (surprise)
+            erreur = abs(Q_nouveau - valeur_actuelle).item()
+            erreurs_td.append(erreur)
 
-            target[idx][torch.argmax(action[idx]).item()] = Q_new
+            target[idx][torch.argmax(action[idx]).item()] = Q_nouveau
 
-        self.optimizer.zero_grad()
+        self.optimiseur.zero_grad()
 
-        # Calcul de la perte
+        # Calcul de la perte (Loss)
         if weights is not None:
             loss_fn = nn.SmoothL1Loss(reduction="none")
-            loss_elementwise = loss_fn(target, pred)
-            loss = (loss_elementwise.mean(dim=1) * weights).mean()
+            loss_element = loss_fn(target, pred)
+            loss = (loss_element.mean(dim=1) * weights).mean()
         else:
-            loss = self.criterion(target, pred)
+            loss = self.critere(target, pred)
 
         loss.backward()
 
-        # Gradient Clipping
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        # On empêche les gradients d'exploser
+        torch.nn.utils.clip_grad_norm_(self.modele.parameters(), max_norm=1.0)
 
-        self.optimizer.step()
-        self.soft_update()
+        self.optimiseur.step()
+        self.mise_a_jour_douce()
 
-        return np.array(td_errors)
+        return np.array(erreurs_td)

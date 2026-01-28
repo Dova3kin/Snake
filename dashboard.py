@@ -6,322 +6,312 @@ import os
 from datetime import datetime
 
 # ============================================================================
-# ELEMENTS UI (BOUTONS & INPUTS)
+# ÉLÉMENTS D'INTERFACE (BOUTONS & CHAMPS TEXTE)
 # ============================================================================
 
 
-class Button:
-    """Bouton interactif simple pour Pygame."""
+class Bouton:
+    """Un bouton simple sur lequel on peut cliquer."""
 
     def __init__(
         self,
         x,
         y,
-        w,
-        h,
-        text,
-        callback,
-        color=(70, 130, 180),
-        hover_color=(100, 160, 210),
+        largeur,
+        hauteur,
+        texte,
+        action,
+        couleur=(70, 130, 180),
+        couleur_survol=(100, 160, 210),
     ):
-        self.rect = pygame.Rect(x, y, w, h)
-        self.text = text
-        self.callback = callback
-        self.color = color
-        self.hover_color = hover_color
+        self.rect = pygame.Rect(x, y, largeur, hauteur)
+        self.texte = texte
+        self.action = action
+        self.couleur = couleur
+        self.couleur_survol = couleur_survol
         self.font = pygame.font.SysFont("arial", 20)
-        self.is_hovered = False
+        self.est_survole = False
 
-    def draw(self, surface):
-        color = self.hover_color if self.is_hovered else self.color
-        pygame.draw.rect(surface, color, self.rect)
+    def dessiner(self, surface):
+        c = self.couleur_survol if self.est_survole else self.couleur
+        pygame.draw.rect(surface, c, self.rect)
         pygame.draw.rect(surface, (200, 200, 200), self.rect, 2)
 
-        text_surf = self.font.render(self.text, True, (255, 255, 255))
-        text_rect = text_surf.get_rect(center=self.rect.center)
-        surface.blit(text_surf, text_rect)
+        surf_texte = self.font.render(self.texte, True, (255, 255, 255))
+        rect_texte = surf_texte.get_rect(center=self.rect.center)
+        surface.blit(surf_texte, rect_texte)
 
-    def handle_event(self, event):
+    def gerer_evenement(self, event):
         if event.type == pygame.MOUSEMOTION:
-            self.is_hovered = self.rect.collidepoint(event.pos)
+            self.est_survole = self.rect.collidepoint(event.pos)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.rect.collidepoint(event.pos):
-                return self.callback()
+                return self.action()
         return None
 
 
-class InputBox:
-    """Champ de saisie texte."""
+class BoiteSaisie:
+    """Champ pour écrire du texte."""
 
-    def __init__(self, x, y, w, h, text=""):
-        self.rect = pygame.Rect(x, y, w, h)
-        self.color = pygame.Color("lightskyblue3")
-        self.text = text
-        self.txt_surface = pygame.font.SysFont("arial", 24).render(
-            text, True, self.color
+    def __init__(self, x, y, largeur, hauteur, texte=""):
+        self.rect = pygame.Rect(x, y, largeur, hauteur)
+        self.couleur = pygame.Color("lightskyblue3")
+        self.texte = texte
+        self.surf_texte = pygame.font.SysFont("arial", 24).render(
+            texte, True, self.couleur
         )
-        self.active = False
+        self.actif = False
 
-    def handle_event(self, event):
+    def gerer_evenement(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
             if self.rect.collidepoint(event.pos):
-                self.active = not self.active
+                self.actif = not self.actif
             else:
-                self.active = False
-            self.color = (
+                self.actif = False
+            self.couleur = (
                 pygame.Color("dodgerblue2")
-                if self.active
+                if self.actif
                 else pygame.Color("lightskyblue3")
             )
         if event.type == pygame.KEYDOWN:
-            if self.active:
+            if self.actif:
                 if event.key == pygame.K_RETURN:
-                    return self.text
+                    return self.texte
                 elif event.key == pygame.K_BACKSPACE:
-                    self.text = self.text[:-1]
+                    self.texte = self.texte[:-1]
                 else:
-                    self.text += event.unicode
-                self.txt_surface = pygame.font.SysFont("arial", 24).render(
-                    self.text, True, self.color
+                    self.texte += event.unicode
+                self.surf_texte = pygame.font.SysFont("arial", 24).render(
+                    self.texte, True, self.couleur
                 )
         return None
 
-    def draw(self, screen):
-        screen.blit(self.txt_surface, (self.rect.x + 5, self.rect.y + 5))
-        pygame.draw.rect(screen, self.color, self.rect, 2)
+    def dessiner(self, ecran):
+        ecran.blit(self.surf_texte, (self.rect.x + 5, self.rect.y + 5))
+        pygame.draw.rect(ecran, self.couleur, self.rect, 2)
 
 
 # ============================================================================
-# TABLEAU DE BORD (DASHBOARD)
+# TABLEAU DE BORD PRINCIPAL
 # ============================================================================
 
 
 class Dashboard:
     """
-    Interface graphique principale pour le monitoring de l'IA.
-    Gère l'affichage du jeu, des graphiques, et la vision du CNN.
+    L'interface graphique qui affiche tout : le jeu, les graphiques, le cerveau.
     """
 
-    def __init__(self, width=1280, height=720):
+    def __init__(self, largeur=1280, hauteur=720):
         pygame.init()
-        self.width = width
-        self.height = height
+        self.largeur = largeur
+        self.hauteur = hauteur
 
-        pygame.display.set_caption("Snake IA - Tableau de Bord")
-        self.display = pygame.display.set_mode((width, height))
+        pygame.display.set_caption("Tableau de Bord - IA Snake")
+        self.ecran = pygame.display.set_mode((largeur, hauteur))
 
-        # Layout
-        self.sidebar_w = 250
-        self.bottom_h = 40
-        self.content_w = width - self.sidebar_w
-        self.content_h = height - self.bottom_h
+        # Mise en page
+        self.largeur_menu = 250
+        self.hauteur_bas = 40
+        self.largeur_contenu = largeur - self.largeur_menu
+        self.hauteur_contenu = hauteur - self.hauteur_bas
 
-        # Quadrants pour l'affichage
-        self.quad_w = self.content_w // 2
-        self.quad_h = self.content_h // 2
+        # On divise l'écran en 4 zones (quadrants)
+        self.quad_l = self.largeur_contenu // 2
+        self.quad_h = self.hauteur_contenu // 2
 
-        # États: RUNNING, PAUSED, MENU_SAVE, MENU_LOAD
+        # États possibles: RUNNING, PAUSED, MENU_SAVE, MENU_LOAD
         self.state = "RUNNING"
-        self.paused = False
+        self.en_pause = False
 
-        # Surfaces
-        self.game_surface = pygame.Surface((self.quad_w, self.quad_h))
-        self.plot_surface = pygame.Surface((self.quad_w, self.quad_h))
-        self.global_plot_surface = pygame.Surface((self.quad_w, self.quad_h))
-        self.nn_surface = pygame.Surface((self.quad_w, self.quad_h))
+        # Surfaces de rendu (pour dessiner "hors écran" avant d'afficher)
+        self.surface_jeu = pygame.Surface((self.quad_l, self.quad_h))
+        self.surface_plot = pygame.Surface((self.quad_l, self.quad_h))
+        self.surface_global = pygame.Surface((self.quad_l, self.quad_h))
+        self.surface_nn = pygame.Surface((self.quad_l, self.quad_h))
 
         self.font = pygame.font.SysFont("arial", 15)
-        self.title_font = pygame.font.SysFont("arial", 18, bold=True)
+        self.font_titre = pygame.font.SysFont("arial", 18, bold=True)
 
-        self._init_ui_elements()
-        self._init_matplotlib()
+        self._init_interface()
+        self._init_graphiques()
 
-        self.info_text = ""
+        self.texte_info = ""
 
-    def _init_ui_elements(self):
-        """Initialisation des boutons et contrôles."""
-        btn_x, btn_w, btn_h = 20, self.sidebar_w - 40, 35
-        y_cursor = 50
-        spacing = 15
+    def _init_interface(self):
+        """On crée tous les boutons."""
+        x, long, h = 20, self.largeur_menu - 40, 35
+        y = 50
+        espace = 15
 
-        self.buttons = []
-        self.lbl_controls = self.title_font.render("CONTRÔLES", True, (255, 255, 255))
+        self.boutons = []
+        self.lbl_controles = self.font_titre.render("CONTRÔLES", True, (255, 255, 255))
 
-        # Boutons Principaux
-        self.buttons.append(
-            Button(
-                btn_x,
-                y_cursor,
-                btn_w,
-                btn_h,
-                "💾 Sauvegarder",
-                lambda: "OPEN_SAVE",
-                color=(46, 139, 87),
-                hover_color=(60, 179, 113),
+        # Boutons principaux
+        self.boutons.append(
+            Bouton(
+                x,
+                y,
+                long,
+                h,
+                "Sauvegarder",
+                lambda: "OUVRIR_SAVE",
+                couleur=(46, 139, 87),
+                couleur_survol=(60, 179, 113),
             )
         )
-        y_cursor += btn_h + spacing
+        y += h + espace
 
-        self.buttons.append(
-            Button(
-                btn_x,
-                y_cursor,
-                btn_w,
-                btn_h,
-                "📂 Charger",
-                lambda: "OPEN_LOAD",
-                color=(70, 130, 180),
-                hover_color=(100, 149, 237),
+        self.boutons.append(
+            Bouton(
+                x,
+                y,
+                long,
+                h,
+                "Charger",
+                lambda: "OUVRIR_LOAD",
+                couleur=(70, 130, 180),
+                couleur_survol=(100, 149, 237),
             )
         )
-        y_cursor += btn_h + spacing
+        y += h + espace
 
-        self.buttons.append(
-            Button(
-                btn_x,
-                y_cursor,
-                btn_w,
-                btn_h,
-                "📷 Screenshot",
+        self.boutons.append(
+            Bouton(
+                x,
+                y,
+                long,
+                h,
+                "Capture d'écran",
                 lambda: "SCREENSHOT",
-                color=(147, 112, 219),
-                hover_color=(186, 85, 211),
+                couleur=(147, 112, 219),
+                couleur_survol=(186, 85, 211),
             )
         )
-        y_cursor += btn_h + spacing
+        y += h + espace
 
-        self.btn_export = Button(
-            btn_x,
-            y_cursor,
-            btn_w,
-            btn_h,
-            "📊 Export Excel",
+        self.btn_export = Bouton(
+            x,
+            y,
+            long,
+            h,
+            "Export Excel",
             lambda: "EXPORT",
-            color=(34, 139, 34),
-            hover_color=(50, 205, 50),
+            couleur=(34, 139, 34),
+            couleur_survol=(50, 205, 50),
         )
-        self.buttons.append(self.btn_export)
-        y_cursor += btn_h + spacing * 2
+        self.boutons.append(self.btn_export)
+        y += h + espace * 2
 
-        # Section Auto-Screen
+        # Option Auto-Screenshot
         self.auto_screen_active = False
         self.screen_interval = 60
-        self.lbl_autoscreen = self.font.render(
-            "Auto-Screenshot:", True, (200, 200, 200)
-        )
-        y_cursor += 20
+        self.lbl_autoscreen = self.font.render("Auto-Capture:", True, (200, 200, 200))
+        y += 20
 
-        self.btn_auto_screen = Button(
-            btn_x,
-            y_cursor,
-            btn_w,
-            btn_h,
-            "Auto: OFF",
+        self.btn_auto_screen = Bouton(
+            x,
+            y,
+            long,
+            h,
+            "Auto: NON",
             lambda: "TOGGLE_AUTO_SCREEN",
-            color=(100, 100, 100),
-            hover_color=(120, 120, 120),
+            couleur=(100, 100, 100),
+            couleur_survol=(120, 120, 120),
         )
-        self.buttons.append(self.btn_auto_screen)
-        y_cursor += btn_h + spacing
+        self.boutons.append(self.btn_auto_screen)
+        y += h + espace
 
-        self.lbl_interval = self.font.render("Interval (s):", True, (200, 200, 200))
-        self.input_interval = InputBox(btn_x + 100, y_cursor - 5, 80, 30, text="60")
-        y_cursor += btn_h + spacing * 2
+        self.lbl_interval = self.font.render("Intervalle (s):", True, (200, 200, 200))
+        self.input_interval = BoiteSaisie(x + 100, y - 5, 80, 30, texte="60")
+        y += h + espace * 2
 
-        # Bouton Quitter
-        self.buttons.append(
-            Button(
-                btn_x,
-                self.height - 80,
-                btn_w,
-                btn_h,
-                "❌ Quitter",
+        # Quitter
+        self.boutons.append(
+            Bouton(
+                x,
+                self.hauteur - 80,
+                long,
+                h,
+                "Quitter",
                 lambda: "QUIT",
-                color=(205, 92, 92),
-                hover_color=(255, 99, 71),
+                couleur=(205, 92, 92),
+                couleur_survol=(255, 99, 71),
             )
         )
 
-        # Menu Sauvegarde
-        self.btn_save_confirm = Button(
+        # Boutons pour les menus (Save/Load)
+        self.btn_confirmer = Bouton(
             0,
             0,
             120,
             35,
             "Valider",
-            lambda: "CONFIRM_SAVE",
-            color=(46, 139, 87),
-            hover_color=(60, 179, 113),
+            lambda: "CONFIRMER",
+            couleur=(46, 139, 87),
+            couleur_survol=(60, 179, 113),
         )
-        self.btn_save_cancel = Button(
+        self.btn_annuler = Bouton(
             0,
             0,
             120,
             35,
             "Annuler",
-            lambda: "CANCEL_SAVE",
-            color=(205, 92, 92),
-            hover_color=(255, 99, 71),
+            lambda: "ANNULER",
+            couleur=(205, 92, 92),
+            couleur_survol=(255, 99, 71),
         )
-        self.input_box = InputBox(self.width // 2 - 100, self.height // 2, 200, 40)
+        self.boite_nom_fichier = BoiteSaisie(
+            self.largeur // 2 - 100, self.hauteur // 2, 200, 40
+        )
 
-        self.file_list = []
-        self.scroll_y = 0
+        self.liste_fichiers = []
+        self.snapshot = None  # Capture de l'écran pour faire un fond flou
 
-    def _init_matplotlib(self):
-        """Configuration des graphiques avec réutilisation des axes pour éviter les fuites mémoire."""
+    def _init_graphiques(self):
+        """On prépare Matplotlib."""
         plt.style.use("dark_background")
-
-        # Créer les figures et axes UNE SEULE fois
         self.fig_local, self.ax_local = plt.subplots(figsize=(5, 3.5), dpi=100)
         self.fig_global, self.ax_global = plt.subplots(figsize=(5, 3.5), dpi=100)
 
-        self.surf_plot_local = None
-        self.surf_plot_global = None
-        self.snapshot = None
+        self.img_plot_local = None
+        self.img_plot_global = None
 
     def __del__(self):
-        """Destructeur pour libérer les ressources Matplotlib."""
         try:
             plt.close(self.fig_local)
             plt.close(self.fig_global)
-        except Exception:
+        finally:
             pass
 
-    def update_info(self, n_games, total_time, epsilon, record):
-        """Met à jour la barre d'info en bas."""
-        hours = int(total_time // 3600)
-        minutes = int((total_time % 3600) // 60)
-        seconds = int(total_time % 60)
-        self.info_text = f"Parties: {n_games} | Record: {record} | Epsilon: {epsilon:.3f} | Temps: {hours:02d}:{minutes:02d}:{seconds:02d}"
+    def update_info(self, nb_parties, temps_total, epsilon, record):
+        heures = int(temps_total // 3600)
+        minutes = int((temps_total % 3600) // 60)
+        secondes = int(temps_total % 60)
+        self.texte_info = f"Parties: {nb_parties} | Record: {record} | Epsilon: {epsilon:.3f} | Temps: {heures:02d}:{minutes:02d}:{secondes:02d}"
 
-    def update_game(self, game_surface):
-        """Affiche le rendu du jeu (centré et mis à l'échelle)."""
-        self.display.fill((20, 20, 25), (0, 0, self.quad_w, self.quad_h))
+    def update_game(self, surface_jeu):
+        """Affiche le jeu de l'agent 0."""
+        self.ecran.fill((20, 20, 25), (0, 0, self.quad_l, self.quad_h))
 
-        gw, gh = game_surface.get_size()
-        scale = min(self.quad_w / gw, self.quad_h / gh) * 0.95
-        new_w, new_h = int(gw * scale), int(gh * scale)
+        gl, gh = surface_jeu.get_size()
+        echelle = min(self.quad_l / gl, self.quad_h / gh) * 0.95
+        nl, nh = int(gl * echelle), int(gh * echelle)
 
-        scaled_surf = pygame.transform.scale(game_surface, (new_w, new_h))
-        pos_x = (self.quad_w - new_w) // 2
-        pos_y = (self.quad_h - new_h) // 2
+        surf_echelle = pygame.transform.scale(surface_jeu, (nl, nh))
+        pos_x = (self.quad_l - nl) // 2
+        pos_y = (self.quad_h - nh) // 2
 
-        self.display.blit(scaled_surf, (pos_x + self.sidebar_w, pos_y))
+        self.ecran.blit(surf_echelle, (pos_x + self.largeur_menu, pos_y))
         pygame.draw.rect(
-            self.display,
-            (100, 100, 100),
-            (pos_x + self.sidebar_w, pos_y, new_w, new_h),
-            1,
+            self.ecran, (100, 100, 100), (pos_x + self.largeur_menu, pos_y, nl, nh), 1
         )
-        self._draw_border(self.sidebar_w, 0, "🎮 Jeu en Direct (Agent 0)")
+        self._dessiner_cadre(self.largeur_menu, 0, "🎮 Vue du Jeu")
 
-    def update_plots(self, scores, mean_scores, global_record):
-        """Met à jour le graphique de session (réutilise l'axe existant)."""
-        self.ax_local.clear()  # Clear l'axe au lieu de clf() sur la figure
-
+    def update_plots(self, scores, moyennes, record):
+        """Met à jour le graphique en temps réel."""
+        self.ax_local.clear()
         self.ax_local.plot(scores, label="Score", color="#00BFFF", linewidth=1.5)
-        self.ax_local.plot(mean_scores, label="Moyenne", color="#FF6347", linewidth=2)
+        self.ax_local.plot(moyennes, label="Moyenne", color="#FF6347", linewidth=2)
         self.ax_local.set_title(
             "Performance de la Session", fontsize=12, fontweight="bold"
         )
@@ -332,159 +322,137 @@ class Dashboard:
 
         canvas = agg.FigureCanvasAgg(self.fig_local)
         canvas.draw()
-        size = canvas.get_width_height()
-        surf = pygame.image.fromstring(
-            canvas.get_renderer().tostring_rgb(), size, "RGB"
-        )
-        self.surf_plot_local = pygame.transform.scale(surf, (self.quad_w, self.quad_h))
+        taille = canvas.get_width_height()
+        raw_data = canvas.get_renderer().tostring_rgb()
+        surf = pygame.image.fromstring(raw_data, taille, "RGB")
+        self.img_plot_local = pygame.transform.scale(surf, (self.quad_l, self.quad_h))
 
-        self.display.blit(self.surf_plot_local, (self.sidebar_w + self.quad_w, 0))
-        self._draw_border(
-            self.sidebar_w + self.quad_w, 0, "📊 Graphique de Performance"
-        )
+        self.ecran.blit(self.img_plot_local, (self.largeur_menu + self.quad_l, 0))
+        self._dessiner_cadre(self.largeur_menu + self.quad_l, 0, "Graphique")
 
-        # Affichage placeholder global si vide
-        if self.surf_plot_global is None:
-            self.global_plot_surface.fill((30, 30, 30))
-            wait_text = self.font.render(
-                "En attente de données...", True, (100, 100, 100)
-            )
-            self.global_plot_surface.blit(
-                wait_text, (self.quad_w // 2 - 60, self.quad_h // 2)
-            )
-            self.display.blit(self.global_plot_surface, (self.sidebar_w, self.quad_h))
-            self._draw_border(self.sidebar_w, self.quad_h, "📈 Progression Globale")
+        # Si pas encore de global, on affiche un texte
+        if self.img_plot_global is None:
+            self.surface_global.fill((30, 30, 30))
+            txt = self.font.render("En attente de données...", True, (100, 100, 100))
+            self.surface_global.blit(txt, (self.quad_l // 2 - 60, self.quad_h // 2))
+            self.ecran.blit(self.surface_global, (self.largeur_menu, self.quad_h))
+            self._dessiner_cadre(self.largeur_menu, self.quad_h, "Historique Global")
         else:
-            self.display.blit(self.surf_plot_global, (self.sidebar_w, self.quad_h))
-            self._draw_border(self.sidebar_w, self.quad_h, "📈 Progression Globale")
+            self.ecran.blit(self.img_plot_global, (self.largeur_menu, self.quad_h))
+            self._dessiner_cadre(self.largeur_menu, self.quad_h, "Historique Global")
 
-    def update_global_plot(self, all_scores):
-        """Met à jour le graphique global (nuage de points, réutilise l'axe existant)."""
-        self.ax_global.clear()  # Clear l'axe au lieu de clf() sur la figure
-
-        y = np.array(all_scores)
+    def update_global_plot(self, tous_les_scores):
+        """Nuage de points global."""
+        self.ax_global.clear()
+        y = np.array(tous_les_scores)
         x = np.arange(len(y))
         self.ax_global.scatter(x, y, s=8, alpha=0.6, c="#00CED1", edgecolors="none")
-        self.ax_global.set_title(
-            "Progression Globale (Nuage)", fontsize=12, fontweight="bold"
-        )
+        self.ax_global.set_title("Progression Totale", fontsize=12, fontweight="bold")
         self.ax_global.set_ylabel("Score", fontsize=10)
         self.ax_global.set_xlabel("Parties Jouées", fontsize=10)
         self.ax_global.grid(True, alpha=0.3)
 
         canvas = agg.FigureCanvasAgg(self.fig_global)
         canvas.draw()
-        size = canvas.get_width_height()
-        surf = pygame.image.fromstring(
-            canvas.get_renderer().tostring_rgb(), size, "RGB"
-        )
-        self.surf_plot_global = pygame.transform.scale(surf, (self.quad_w, self.quad_h))
+        taille = canvas.get_width_height()
+        raw = canvas.get_renderer().tostring_rgb()
+        surf = pygame.image.fromstring(raw, taille, "RGB")
+        self.img_plot_global = pygame.transform.scale(surf, (self.quad_l, self.quad_h))
 
-        self.display.blit(self.surf_plot_global, (self.sidebar_w, self.quad_h))
-        self._draw_border(self.sidebar_w, self.quad_h, "📈 Progression Globale")
+        self.ecran.blit(self.img_plot_global, (self.largeur_menu, self.quad_h))
+        self._dessiner_cadre(self.largeur_menu, self.quad_h, "Historique Global")
 
-    def update_nn(self, model, activations):
-        """Visualise les activations du CNN (Entrées)."""
-        self.nn_surface.fill((20, 20, 30))
+    def update_nn(self, activations):
+        """Affiche ce que le robot 'voit'."""
+        self.surface_nn.fill((20, 20, 30))
 
         if len(activations) > 0 and activations[0] is not None:
-            input_tensor = activations[0].cpu().numpy()
-            if len(input_tensor.shape) == 4:
-                input_tensor = input_tensor[0]
+            entree = activations[0].cpu().numpy()
+            if len(entree.shape) == 4:
+                entree = entree[0]
 
-            ch_names = ["Corps (Vert)", "Tête (Bleu)", "Nourriture (Rouge)"]
-            ch_colors = [(0, 200, 0), (50, 100, 255), (255, 50, 50)]
+            noms = ["Dégradé Corps", "Direction Tête", "Position Pomme"]
+            couleurs = [(0, 200, 0), (50, 100, 255), (255, 50, 50)]
 
-            # Dimensions dynamiques depuis le tenseur (C, H, W)
-            tensor_h, tensor_w = input_tensor.shape[1], input_tensor.shape[2]
+            th, tl = entree.shape[1], entree.shape[2]
 
-            # Calculer le scale pour que les 3 images rentrent dans le quadrant
-            margin = 15
-            available_w = self.quad_w - 40  # Marge de sécurité
-            available_h = self.quad_h - 100  # Espace pour titre et légendes
+            marge = 15
+            dispo_l = self.quad_l - 40
+            dispo_h = self.quad_h - 100
 
-            # Largeur totale = 3 * (tensor_w * scale) + 2 * margin
-            max_scale_w = (available_w - 2 * margin) / (3 * tensor_w)
-            max_scale_h = available_h / tensor_h
-            scale = min(max_scale_w, max_scale_h, 6)  # Max 6 pour éviter pixelisation
-            scale = max(1, int(scale))  # Au minimum 1
+            max_scale_l = (dispo_l - 2 * marge) / (3 * tl)
+            max_scale_h = dispo_h / th
+            scale = int(min(max_scale_l, max_scale_h, 6))
+            scale = max(1, scale)
 
-            img_w, img_h = tensor_w * scale, tensor_h * scale
-
-            total_w = 3 * img_w + 2 * margin
-            start_x = (self.quad_w - total_w) // 2
+            myl, myh = tl * scale, th * scale
+            total_l = 3 * myl + 2 * marge
+            start_x = (self.quad_l - total_l) // 2
 
             for i in range(3):
-                channel = input_tensor[i]
-                surf = pygame.Surface((tensor_w, tensor_h))
+                canal = entree[i]
+                surf = pygame.Surface((tl, th))
                 surf.fill((10, 10, 15))
 
-                rows, cols = np.where(channel > 0)
+                rows, cols = np.where(canal > 0)
                 for r, c in zip(rows, cols):
-                    surf.set_at((c, r), ch_colors[i])
+                    surf.set_at((c, r), couleurs[i])
 
-                surf = pygame.transform.scale(surf, (img_w, img_h))
-                x = start_x + i * (img_w + margin)
+                surf_zoom = pygame.transform.scale(surf, (myl, myh))
+                x = start_x + i * (myl + marge)
                 y = 50
                 pygame.draw.rect(
-                    self.nn_surface,
-                    ch_colors[i],
-                    (x - 2, y - 2, img_w + 4, img_h + 4),
-                    2,
+                    self.surface_nn, couleurs[i], (x - 2, y - 2, myl + 4, myh + 4), 2
                 )
-                self.nn_surface.blit(surf, (x, y))
+                self.surface_nn.blit(surf_zoom, (x, y))
 
-                text = self.font.render(ch_names[i], True, ch_colors[i])
-                text_rect = text.get_rect(center=(x + img_w // 2, y + img_h + 15))
-                self.nn_surface.blit(text, text_rect)
+                txt = self.font.render(noms[i], True, couleurs[i])
+                rt = txt.get_rect(center=(x + myl // 2, y + myh + 15))
+                self.surface_nn.blit(txt, rt)
 
-        self.display.blit(self.nn_surface, (self.sidebar_w + self.quad_w, self.quad_h))
-        self._draw_border(
-            self.sidebar_w + self.quad_w, self.quad_h, "🧠 Vision du CNN (Entrées)"
-        )
+        self.ecran.blit(self.surface_nn, (self.largeur_menu + self.quad_l, self.quad_h))
+        self._dessiner_cadre(self.largeur_menu + self.quad_l, self.quad_h, "Vision IA")
 
     def _take_screenshot(self):
         if not os.path.exists("screenshots"):
             os.makedirs("screenshots")
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"screenshots/screenshot_{timestamp}.png"
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        nom = f"screenshots/capture_{ts}.png"
         try:
-            pygame.image.save(self.display, filename)
-            print(f"📸 Screenshot sauvegardé: {filename}")
+            pygame.image.save(self.ecran, nom)
+            print(f"📸 Screenshot : {nom}")
         except Exception as e:
-            print(f"Erreur screenshot: {e}")
+            print(f"Erreur screenshot : {e}")
 
-    def _draw_border(self, x, y, title):
-        pygame.draw.rect(
-            self.display, (60, 60, 70), (x, y, self.quad_w, self.quad_h), 2
-        )
-        title_bg = pygame.Surface((len(title) * 10 + 20, 25), pygame.SRCALPHA)
-        title_bg.fill((30, 30, 40, 200))
+    def _dessiner_cadre(self, x, y, titre):
+        pygame.draw.rect(self.ecran, (60, 60, 70), (x, y, self.quad_l, self.quad_h), 2)
+        fond_titre = pygame.Surface((len(titre) * 10 + 20, 25), pygame.SRCALPHA)
+        fond_titre.fill((30, 30, 40, 200))
         pos_y = y + self.quad_h - 30
-        self.display.blit(title_bg, (x + 5, pos_y))
-        text = self.title_font.render(title, True, (220, 220, 220))
-        self.display.blit(text, (x + 10, pos_y + 3))
+        self.ecran.blit(fond_titre, (x + 5, pos_y))
+        txt = self.font_titre.render(titre, True, (220, 220, 220))
+        self.ecran.blit(txt, (x + 10, pos_y + 3))
 
     def handle_input(self, event):
-        """Gère les événements souris/clavier."""
+        """Fonction appelée par agent.py pour gérer les clics."""
         action = None
 
         if self.state == "RUNNING":
-            for btn in self.buttons:
-                res = btn.handle_event(event)
-                if res == "OPEN_SAVE":
-                    self.snapshot = self.display.copy()
+            for btn in self.boutons:
+                res = btn.gerer_evenement(event)
+                if res == "OUVRIR_SAVE":
+                    self.snapshot = self.ecran.copy()
                     self.state = "MENU_SAVE"
-                    self.paused = True
-                    self.input_box.text = "modele_sauvegarde"
-                    self.input_box.active = True
-                elif res == "OPEN_LOAD":
-                    self.snapshot = self.display.copy()
+                    self.en_pause = True
+                    self.boite_nom_fichier.texte = "mon_modele"
+                    self.boite_nom_fichier.actif = True
+                elif res == "OUVRIR_LOAD":
+                    self.snapshot = self.ecran.copy()
                     self.state = "MENU_LOAD"
-                    self.paused = True
+                    self.en_pause = True
                     if not os.path.exists("./model"):
                         os.makedirs("./model")
-                    self.file_list = [
+                    self.liste_fichiers = [
                         f for f in os.listdir("./model") if f.endswith(".pth")
                     ]
                 elif res == "SCREENSHOT":
@@ -495,227 +463,195 @@ class Dashboard:
                     action = "EXPORT"
                 elif res == "TOGGLE_AUTO_SCREEN":
                     self.auto_screen_active = not self.auto_screen_active
-                    self.btn_auto_screen.text = (
-                        f"Auto: {'ON' if self.auto_screen_active else 'OFF'}"
+                    self.btn_auto_screen.texte = (
+                        f"Auto: {'OUI' if self.auto_screen_active else 'NON'}"
                     )
-                    self.btn_auto_screen.color = (
+                    self.btn_auto_screen.couleur = (
                         (46, 139, 87) if self.auto_screen_active else (100, 100, 100)
                     )
 
-            # Intervalle Input
-            self.input_interval.handle_event(event)
+            self.input_interval.gerer_evenement(event)
             try:
-                val = int(self.input_interval.text)
+                val = int(self.input_interval.texte)
                 if val > 0:
                     self.screen_interval = val
-            except ValueError:
+            finally:
                 pass
 
         elif self.state == "MENU_SAVE":
-            if self.btn_save_confirm.handle_event(event) == "CONFIRM_SAVE":
-                action = ("SAVE", self.input_box.text)
+            if self.btn_confirmer.gerer_evenement(event) == "CONFIRMER":
+                action = ("SAVE", self.boite_nom_fichier.texte)
                 self.state = "RUNNING"
-                self.paused = False
-            elif self.btn_save_cancel.handle_event(event) == "CANCEL_SAVE":
+                self.en_pause = False
+            elif self.btn_annuler.gerer_evenement(event) == "ANNULER":
                 self.state = "RUNNING"
-                self.paused = False
+                self.en_pause = False
 
-            res = self.input_box.handle_event(event)
-            if res:
+            res = self.boite_nom_fichier.gerer_evenement(event)
+            if res:  # Entrée
                 action = ("SAVE", res)
                 self.state = "RUNNING"
-                self.paused = False
+                self.en_pause = False
 
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 self.state = "RUNNING"
-                self.paused = False
+                self.en_pause = False
 
         elif self.state == "MENU_LOAD":
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 self.state = "RUNNING"
-                self.paused = False
+                self.en_pause = False
 
             if event.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = event.pos
-                dialog_h = min(80 + len(self.file_list) * 35 + 40, 400)
-                dialog_y = (self.height - dialog_h) // 2
-                start_y = dialog_y + 60
+                h_dialog = min(80 + len(self.liste_fichiers) * 35 + 40, 400)
+                y_dialog = (self.hauteur - h_dialog) // 2
+                y_start = y_dialog + 60
 
-                for i, f in enumerate(self.file_list):
-                    y = start_y + i * 35
-                    if (
-                        self.width // 2 - 190 < mx < self.width // 2 + 190
-                        and y < my < y + 30
-                    ):
+                for i, f in enumerate(self.liste_fichiers):
+                    y = y_start + i * 35
+                    # Zone de clic approximative (centrée)
+                    dw = 400
+                    dx = (self.largeur - dw) // 2
+                    if dx + 20 < mx < dx + dw - 20 and y < my < y + 30:
                         action = ("LOAD", f)
                         self.state = "RUNNING"
-                        self.paused = False
+                        self.en_pause = False
                         break
+
         return action
 
     def update(self):
-        """Boucle de mise à jour graphique principale."""
+        """Mise à jour visuelle (boucle principale UI)."""
         if self.state == "RUNNING":
-            if self.surf_plot_local:
-                self.display.blit(
-                    self.surf_plot_local, (self.sidebar_w + self.quad_w, 0)
+            if self.img_plot_local:
+                self.ecran.blit(
+                    self.img_plot_local, (self.largeur_menu + self.quad_l, 0)
                 )
-            if self.surf_plot_global:
-                self.display.blit(self.surf_plot_global, (self.sidebar_w, self.quad_h))
+            if self.img_plot_global:
+                self.ecran.blit(self.img_plot_global, (self.largeur_menu, self.quad_h))
 
-            # Sidebar
+            # Menu gauche
             pygame.draw.rect(
-                self.display, (40, 40, 50), (0, 0, self.sidebar_w, self.height)
+                self.ecran, (40, 40, 50), (0, 0, self.largeur_menu, self.hauteur)
             )
             pygame.draw.line(
-                self.display,
+                self.ecran,
                 (60, 60, 70),
-                (self.sidebar_w, 0),
-                (self.sidebar_w, self.height),
+                (self.largeur_menu, 0),
+                (self.largeur_menu, self.hauteur),
                 2,
             )
 
-            self.display.blit(self.lbl_controls, (20, 20))
-            self.display.blit(
-                self.lbl_autoscreen, (20, self.btn_auto_screen.rect.y - 25)
-            )
-            self.display.blit(self.lbl_interval, (20, self.input_interval.rect.y + 5))
+            self.ecran.blit(self.lbl_controles, (20, 20))
+            self.ecran.blit(self.lbl_autoscreen, (20, self.btn_auto_screen.rect.y - 25))
+            self.ecran.blit(self.lbl_interval, (20, self.input_interval.rect.y + 5))
 
-            for btn in self.buttons:
-                btn.draw(self.display)
-            self.input_interval.draw(self.display)
+            for btn in self.boutons:
+                btn.dessiner(self.ecran)
+            self.input_interval.dessiner(self.ecran)
 
-            # Bottom Bar
+            # Barre du bas
             pygame.draw.rect(
-                self.display,
+                self.ecran,
                 (30, 30, 35),
-                (self.sidebar_w, self.content_h, self.content_w, self.bottom_h),
+                (
+                    self.largeur_menu,
+                    self.hauteur_contenu,
+                    self.largeur_contenu,
+                    self.hauteur_bas,
+                ),
             )
             pygame.draw.line(
-                self.display,
+                self.ecran,
                 (60, 60, 70),
-                (self.sidebar_w, self.content_h),
-                (self.width, self.content_h),
+                (self.largeur_menu, self.hauteur_contenu),
+                (self.largeur, self.hauteur_contenu),
                 2,
             )
 
-            if self.info_text:
-                txt_surf = self.title_font.render(self.info_text, True, (200, 200, 200))
-                txt_rect = txt_surf.get_rect(
+            if self.texte_info:
+                surf = self.font_titre.render(self.texte_info, True, (200, 200, 200))
+                rect = surf.get_rect(
                     center=(
-                        self.sidebar_w + self.content_w // 2,
-                        self.content_h + self.bottom_h // 2,
+                        self.largeur_menu + self.largeur_contenu // 2,
+                        self.hauteur_contenu + self.hauteur_bas // 2,
                     )
                 )
-                self.display.blit(txt_surf, txt_rect)
+                self.ecran.blit(surf, rect)
 
         # Modales
         if self.state != "RUNNING" and self.snapshot:
-            self.display.blit(self.snapshot, (0, 0))
+            self.ecran.blit(self.snapshot, (0, 0))
+            self._dessiner_fond_modal()
 
         if self.state == "MENU_SAVE":
-            self._draw_modal_bg()
-            self._draw_save_dialog()
-
+            self._dessiner_dialogue_save()
         elif self.state == "MENU_LOAD":
-            self._draw_modal_bg()
-            self._draw_load_dialog()
+            self._dessiner_dialogue_load()
 
         pygame.display.flip()
 
-    def _draw_modal_bg(self):
-        s = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+    def _dessiner_fond_modal(self):
+        s = pygame.Surface((self.largeur, self.hauteur), pygame.SRCALPHA)
         s.fill((0, 0, 0, 220))
-        self.display.blit(s, (0, 0))
+        self.ecran.blit(s, (0, 0))
 
-    def _draw_save_dialog(self):
-        dialog_w, dialog_h = 450, 180
-        dialog_x, dialog_y = (self.width - dialog_w) // 2, (self.height - dialog_h) // 2
+    def _dessiner_dialogue_save(self):
+        w, h = 450, 180
+        x, y = (self.largeur - w) // 2, (self.hauteur - h) // 2
 
-        pygame.draw.rect(
-            self.display,
-            (50, 50, 60),
-            (dialog_x, dialog_y, dialog_w, dialog_h),
-            border_radius=10,
-        )
-        pygame.draw.rect(
-            self.display,
-            (100, 100, 120),
-            (dialog_x, dialog_y, dialog_w, dialog_h),
-            2,
-            border_radius=10,
-        )
+        pygame.draw.rect(self.ecran, (50, 50, 60), (x, y, w, h), border_radius=10)
+        pygame.draw.rect(self.ecran, (100, 100, 120), (x, y, w, h), 2, border_radius=10)
 
-        txt = self.title_font.render(
-            "💾 Nom de la sauvegarde (ENTRÉE):", True, (255, 255, 255)
-        )
-        self.display.blit(txt, (dialog_x + 20, dialog_y + 25))
+        txt = self.font_titre.render("Nom de la sauvegarde :", True, (255, 255, 255))
+        self.ecran.blit(txt, (x + 20, y + 25))
 
-        self.input_box.rect.x = dialog_x + 50
-        self.input_box.rect.y = dialog_y + 70
-        self.input_box.rect.width = dialog_w - 100
-        self.input_box.draw(self.display)
+        self.boite_nom_fichier.rect.x = x + 50
+        self.boite_nom_fichier.rect.y = y + 70
+        self.boite_nom_fichier.rect.width = w - 100
+        self.boite_nom_fichier.dessiner(self.ecran)
 
-        hint = self.font.render("ÉCHAP pour annuler", True, (150, 150, 150))
-        self.display.blit(
-            hint, (dialog_x + (dialog_w - hint.get_width()) // 2, dialog_y + 120)
-        )
+        indice = self.font.render("ECHAP pour annuler", True, (150, 150, 150))
+        self.ecran.blit(indice, (x + (w - indice.get_width()) // 2, y + 120))
 
-        self.btn_save_confirm.rect.topleft = (dialog_x + 50, dialog_y + 115)
-        self.btn_save_cancel.rect.topleft = (dialog_x + dialog_w - 170, dialog_y + 115)
-        self.btn_save_confirm.draw(self.display)
-        self.btn_save_cancel.draw(self.display)
+        self.btn_confirmer.rect.topleft = (x + 50, y + 115)
+        self.btn_annuler.rect.topleft = (x + w - 170, y + 115)
+        self.btn_confirmer.dessiner(self.ecran)
+        self.btn_annuler.dessiner(self.ecran)
 
-    def _draw_load_dialog(self):
-        dialog_w = 400
-        dialog_h = min(80 + len(self.file_list) * 35 + 40, 400)
-        dialog_x, dialog_y = (self.width - dialog_w) // 2, (self.height - dialog_h) // 2
+    def _dessiner_dialogue_load(self):
+        w = 400
+        h = min(80 + len(self.liste_fichiers) * 35 + 40, 400)
+        x, y = (self.largeur - w) // 2, (self.hauteur - h) // 2
 
-        pygame.draw.rect(
-            self.display,
-            (50, 50, 60),
-            (dialog_x, dialog_y, dialog_w, dialog_h),
-            border_radius=10,
-        )
-        pygame.draw.rect(
-            self.display,
-            (100, 100, 120),
-            (dialog_x, dialog_y, dialog_w, dialog_h),
-            2,
-            border_radius=10,
-        )
+        pygame.draw.rect(self.ecran, (50, 50, 60), (x, y, w, h), border_radius=10)
+        pygame.draw.rect(self.ecran, (100, 100, 120), (x, y, w, h), 2, border_radius=10)
 
-        txt = self.title_font.render("📂 Choisir un modèle:", True, (255, 255, 255))
-        self.display.blit(txt, (dialog_x + 20, dialog_y + 20))
+        txt = self.font_titre.render("Choisir un modèle :", True, (255, 255, 255))
+        self.ecran.blit(txt, (x + 20, y + 20))
 
-        if not self.file_list:
-            no_file = self.font.render("Aucune sauvegarde", True, (200, 100, 100))
-            self.display.blit(
-                no_file,
-                (dialog_x + (dialog_w - no_file.get_width()) // 2, dialog_y + 70),
-            )
+        if not self.liste_fichiers:
+            vide = self.font.render("Aucune sauvegarde trouvée", True, (200, 100, 100))
+            self.ecran.blit(vide, (x + (w - vide.get_width()) // 2, y + 70))
         else:
-            start_y = dialog_y + 60
+            y_start = y + 60
             mx, my = pygame.mouse.get_pos()
-            for i, f in enumerate(self.file_list):
-                y = start_y + i * 35
-                is_hover = (
-                    dialog_x + 20 < mx < dialog_x + dialog_w - 20 and y < my < y + 30
-                )
-                if is_hover:
+            for i, f in enumerate(self.liste_fichiers):
+                yf = y_start + i * 35
+                hover = (x + 20 < mx < x + w - 20) and (yf < my < yf + 30)
+                if hover:
                     pygame.draw.rect(
-                        self.display,
+                        self.ecran,
                         (70, 130, 180),
-                        (dialog_x + 20, y, dialog_w - 40, 30),
+                        (x + 20, yf, w - 40, 30),
                         border_radius=5,
                     )
-                f_txt = self.font.render(
-                    f"📄 {f}", True, (255, 255, 255) if is_hover else (200, 200, 200)
-                )
-                self.display.blit(f_txt, (dialog_x + 30, y + 6))
 
-        hint = self.font.render("ÉCHAP pour annuler", True, (150, 150, 150))
-        self.display.blit(
-            hint,
-            (dialog_x + (dialog_w - hint.get_width()) // 2, dialog_y + dialog_h - 30),
-        )
+                ftxt = self.font.render(
+                    f, True, (255, 255, 255) if hover else (200, 200, 200)
+                )
+                self.ecran.blit(ftxt, (x + 30, yf + 6))
+
+        indice = self.font.render("ECHAP pour annuler", True, (150, 150, 150))
+        self.ecran.blit(indice, (x + (w - indice.get_width()) // 2, y + h - 30))

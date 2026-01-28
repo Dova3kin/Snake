@@ -1,474 +1,79 @@
 """
-Snake Game - Conçu pour l'apprentissage par renforcement
+Jeu Snake pour le projet d'IA
 """
 
 import pygame
-import random
 import numpy as np
 from enum import Enum
 from collections import namedtuple
 
-# Initialisation de Pygame
+# On initialise pygame
 pygame.init()
 
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
+# Configuration
+TAILLE_BLOC = 20
+FPS = 144
+VITESSE = 20
 
-BLOCK_SIZE = 20
-FPS = 60
-GAME_SPEED = 500
+# Les couleurs
+BLANC = (255, 255, 255)
+NOIR = (20, 20, 30)
+ROUGE = (220, 50, 50)
+VERT = (50, 200, 50)
+BLEU = (50, 100, 200)
+GRIS = (40, 40, 50)
 
-# Couleurs
-WHITE = (255, 255, 255)
-BLACK = (20, 20, 30)
-RED = (220, 50, 50)
-GREEN = (50, 200, 50)
-GREEN_DARK = (40, 160, 40)
-BLUE = (50, 100, 200)
-GRAY = (40, 40, 50)
-
-# Police
+# Polices
 FONT = pygame.font.SysFont("arial", 25)
-FONT_BIG = pygame.font.SysFont("arial", 50)
-
-
-# ============================================================================
-# STRUCTURES DE DONNÉES
-# ============================================================================
+FONT_GRAND = pygame.font.SysFont("arial", 50)
 
 
 class Direction(Enum):
-    RIGHT = 1
-    LEFT = 2
-    UP = 3
-    DOWN = 4
+    DROITE = 1
+    GAUCHE = 2
+    HAUT = 3
+    BAS = 4
 
 
 Point = namedtuple("Point", "x, y")
 
 
-# ============================================================================
-# CLASSE PRINCIPALE DU JEU
-# ============================================================================
-
-
-class SnakeGame:
-    """
-    Classe principale du jeu Snake, adaptable pour le RL.
-    """
-
-    def __init__(self, width=640, height=480, render_mode=True, embedded=False):
-        self.width = width
-        self.height = height
-        self.render_mode = render_mode
-
-        # Configuration de l'affichage
-        if self.render_mode:
-            if embedded:
-                self.display = pygame.Surface((self.width, self.height))
-            else:
-                self.display = pygame.display.set_mode((self.width, self.height))
-                pygame.display.set_caption("Snake Game - RL Ready")
-            self.clock = pygame.time.Clock()
-        else:
-            self.display = None
-            self.clock = None
-
-        # Pré-allocation buffer
-        self.state_buffer = np.zeros(
-            (3, self.height // BLOCK_SIZE, self.width // BLOCK_SIZE), dtype=np.float32
-        )
-
-        self.reset()
-
-    def reset(self):
-        """Réinitialise le jeu."""
-        self.direction = Direction.RIGHT
-        self._head_direction = Direction.RIGHT
-
-        self.head = Point(self.width // 2, self.height // 2)
-        self.snake = [
-            self.head,
-            Point(self.head.x - BLOCK_SIZE, self.head.y),
-            Point(self.head.x - (2 * BLOCK_SIZE), self.head.y),
-        ]
-
-        self.score = 0
-        self.food = None
-        self._place_food()
-
-        self.frame_iteration = 0
-        self.move_counter = 0
-        self.frames_per_move = FPS // GAME_SPEED
-
-        self.grid_width = self.width // BLOCK_SIZE
-        self.grid_height = self.height // BLOCK_SIZE
-
-        return self.get_state()
-
-    def get_grid_state(self):
-        """Retourne l'état du jeu sous forme de grille 2D pour le CNN."""
-        self.state_buffer.fill(0)
-
-        # Canal 0: Corps du serpent (1.0)
-        for point in self.snake:
-            gx = int(point.x // BLOCK_SIZE)
-            gy = int(point.y // BLOCK_SIZE)
-            if 0 <= gx < self.grid_width and 0 <= gy < self.grid_height:
-                self.state_buffer[0, gy, gx] = 1.0
-
-        # Canal 1: Tête + Direction (encodée)
-        head_gx = int(self.head.x // BLOCK_SIZE)
-        head_gy = int(self.head.y // BLOCK_SIZE)
-
-        if 0 <= head_gx < self.grid_width and 0 <= head_gy < self.grid_height:
-            direction_value = 0.0
-            if self.direction == Direction.RIGHT:
-                direction_value = 0.2
-            elif self.direction == Direction.DOWN:
-                direction_value = 0.4
-            elif self.direction == Direction.LEFT:
-                direction_value = 0.6
-            elif self.direction == Direction.UP:
-                direction_value = 0.8
-
-            self.state_buffer[1, head_gy, head_gx] = direction_value
-
-        # Canal 2: Nourriture
-        food_gx = int(self.food.x // BLOCK_SIZE)
-        food_gy = int(self.food.y // BLOCK_SIZE)
-        if 0 <= food_gx < self.grid_width and 0 <= food_gy < self.grid_height:
-            self.state_buffer[2, food_gy, food_gx] = 1.0
-
-        return self.state_buffer.copy()
-
-    def _place_food(self):
-        """Place la nourriture aléatoirement."""
-        x = random.randint(0, (self.width - BLOCK_SIZE) // BLOCK_SIZE) * BLOCK_SIZE
-        y = random.randint(0, (self.height - BLOCK_SIZE) // BLOCK_SIZE) * BLOCK_SIZE
-        self.food = Point(x, y)
-
-        if self.food in self.snake:
-            self._place_food()
-
-    def get_state(self):
-        """Retourne l'état (format vecteur simple)."""
-        head = self.snake[0]
-
-        point_l = Point(head.x - BLOCK_SIZE, head.y)
-        point_r = Point(head.x + BLOCK_SIZE, head.y)
-        point_u = Point(head.x, head.y - BLOCK_SIZE)
-        point_d = Point(head.x, head.y + BLOCK_SIZE)
-
-        dir_l = self.direction == Direction.LEFT
-        dir_r = self.direction == Direction.RIGHT
-        dir_u = self.direction == Direction.UP
-        dir_d = self.direction == Direction.DOWN
-
-        state = [
-            # Danger devant
-            (dir_r and self._is_collision(point_r))
-            or (dir_l and self._is_collision(point_l))
-            or (dir_u and self._is_collision(point_u))
-            or (dir_d and self._is_collision(point_d)),
-            # Danger à droite
-            (dir_u and self._is_collision(point_r))
-            or (dir_d and self._is_collision(point_l))
-            or (dir_l and self._is_collision(point_u))
-            or (dir_r and self._is_collision(point_d)),
-            # Danger à gauche
-            (dir_d and self._is_collision(point_r))
-            or (dir_u and self._is_collision(point_l))
-            or (dir_r and self._is_collision(point_u))
-            or (dir_l and self._is_collision(point_d)),
-            # Direction
-            dir_l,
-            dir_r,
-            dir_u,
-            dir_d,
-            # Nourriture
-            self.food.x < head.x,  # Gauche
-            self.food.x > head.x,  # Droite
-            self.food.y < head.y,  # Haut
-            self.food.y > head.y,  # Bas
-        ]
-
-        return np.array(state, dtype=int)
-
-    def _is_collision(self, point=None):
-        if point is None:
-            point = self.head
-
-        # Collision Murs
-        if (
-            point.x > self.width - BLOCK_SIZE
-            or point.x < 0
-            or point.y > self.height - BLOCK_SIZE
-            or point.y < 0
-        ):
-            return True
-
-        # Collision Corps
-        if point in self.snake[1:]:
-            return True
-
-        return False
-
-    def play_step(self, action=None, events=None):
-        """Exécute une frame de jeu."""
-        # Gestion des Inputs
-        if self.render_mode:
-            if events is None:
-                events = pygame.event.get()
-
-            for event in events:
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    quit()
-                if event.type == pygame.KEYDOWN and action is None:
-                    if (
-                        event.key == pygame.K_LEFT
-                        and self._head_direction != Direction.RIGHT
-                    ):
-                        self.direction = Direction.LEFT
-                    elif (
-                        event.key == pygame.K_RIGHT
-                        and self._head_direction != Direction.LEFT
-                    ):
-                        self.direction = Direction.RIGHT
-                    elif (
-                        event.key == pygame.K_UP
-                        and self._head_direction != Direction.DOWN
-                    ):
-                        self.direction = Direction.UP
-                    elif (
-                        event.key == pygame.K_DOWN
-                        and self._head_direction != Direction.UP
-                    ):
-                        self.direction = Direction.DOWN
-
-        self.move_counter += 1
-        reward = 0
-        game_over = False
-
-        # Logique de mouvement (Headless = instantané, Render = limité par FPS)
-        if not self.render_mode or self.move_counter >= self.frames_per_move:
-            self.move_counter = 0
-            self.frame_iteration += 1
-
-            # Application de l'action IA
-            if action is not None:
-                self._apply_action(action)
-
-            # Déplacement
-            self._move()
-            self.snake.insert(0, self.head)
-
-            # Vérification Collision ou Boucle infinie
-            if self._is_collision() or (
-                action is not None and self.frame_iteration > 100 * len(self.snake)
-            ):
-                game_over = True
-                reward = -10
-                return reward, game_over, self.score
-
-            # Manger ou Avancer
-            if self.head == self.food:
-                self.score += 1
-                reward = 10
-                self._place_food()
-            else:
-                self.snake.pop()
-
-        # Mise à jour graphique
-        if self.render_mode:
-            self._update_ui()
-            self.clock.tick(FPS)
-
-        return reward, game_over, self.score
-
-    def _apply_action(self, action):
-        """Convertit l'action [Straight, Right, Left] en Direction."""
-        clock_wise = [Direction.RIGHT, Direction.DOWN, Direction.LEFT, Direction.UP]
-        idx = clock_wise.index(self.direction)
-
-        if np.array_equal(action, [1, 0, 0]):
-            new_dir = clock_wise[idx]  # Tout droit
-        elif np.array_equal(action, [0, 1, 0]):
-            next_idx = (idx + 1) % 4
-            new_dir = clock_wise[next_idx]  # Droite
-        else:
-            next_idx = (idx - 1) % 4
-            new_dir = clock_wise[next_idx]  # Gauche
-
-        self.direction = new_dir
-
-    def _move(self):
-        """Met à jour les coordonnées de la tête."""
-        self._head_direction = self.direction
-        x = self.head.x
-        y = self.head.y
-
-        if self.direction == Direction.RIGHT:
-            x += BLOCK_SIZE
-        elif self.direction == Direction.LEFT:
-            x -= BLOCK_SIZE
-        elif self.direction == Direction.DOWN:
-            y += BLOCK_SIZE
-        elif self.direction == Direction.UP:
-            y -= BLOCK_SIZE
-
-        self.head = Point(x, y)
-
-    def _update_ui(self):
-        """Dessine le jeu."""
-        self.display.fill(BLACK)
-
-        # Grille
-        for x in range(0, self.width, BLOCK_SIZE):
-            pygame.draw.line(self.display, GRAY, (x, 0), (x, self.height))
-        for y in range(0, self.height, BLOCK_SIZE):
-            pygame.draw.line(self.display, GRAY, (0, y), (self.width, y))
-
-        # Serpent avec Gradient
-        for i, pt in enumerate(self.snake):
-            ratio = 1 - (i / len(self.snake))
-            brightness = max(0.2, ratio)
-
-            color = (
-                int(GREEN[0] * brightness),
-                int(GREEN[1] * brightness),
-                int(GREEN[2] * brightness),
-            )
-
-            pygame.draw.rect(
-                self.display, color, pygame.Rect(pt.x, pt.y, BLOCK_SIZE, BLOCK_SIZE)
-            )
-            pygame.draw.rect(
-                self.display,
-                BLACK,
-                pygame.Rect(pt.x + 2, pt.y + 2, BLOCK_SIZE - 4, BLOCK_SIZE - 4),
-                1,
-            )
-
-        # Nourriture
-        pygame.draw.rect(
-            self.display,
-            RED,
-            pygame.Rect(self.food.x, self.food.y, BLOCK_SIZE, BLOCK_SIZE),
-        )
-        pygame.draw.rect(
-            self.display,
-            WHITE,
-            pygame.Rect(
-                self.food.x + 4, self.food.y + 4, BLOCK_SIZE - 8, BLOCK_SIZE - 8
-            ),
-        )
-
-        # Score
-        text = FONT.render(f"Score: {self.score}", True, WHITE)
-        self.display.blit(text, [10, 10])
-
-        pygame.display.flip()
-
-    def show_game_over(self):
-        if not self.render_mode:
-            return
-
-        self.display.fill(BLACK)
-
-        text = FONT_BIG.render("GAME OVER", True, RED)
-        text_rect = text.get_rect(center=(self.width // 2, self.height // 2 - 50))
-        self.display.blit(text, text_rect)
-
-        score_text = FONT.render(f"Score final: {self.score}", True, WHITE)
-        score_rect = score_text.get_rect(
-            center=(self.width // 2, self.height // 2 + 20)
-        )
-        self.display.blit(score_text, score_rect)
-
-        restart_text = FONT.render("JOUER: Espace | QUITTER: Esc", True, GRAY)
-        restart_rect = restart_text.get_rect(
-            center=(self.width // 2, self.height // 2 + 70)
-        )
-        self.display.blit(restart_text, restart_rect)
-
-        pygame.display.flip()
-
-
-# ============================================================================
-# BOUCLE PRINCIPALE (MODE HUMAIN)
-# ============================================================================
-
-
-def main():
-    game = SnakeGame()
-
-    while True:
-        while True:
-            reward, game_over, score = game.play_step()
-            if game_over:
-                break
-
-        game.show_game_over()
-
-        waiting = True
-        while waiting:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    return
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_SPACE:
-                        game.reset()
-                        waiting = False
-                    elif event.key == pygame.K_ESCAPE:
-                        pygame.quit()
-                        return
-
-        print(f"Partie terminée! Score: {score}")
-
-
-# ============================================================================
-# MOTEUR VECTORISÉ (POUR L'ENTRAÎNEMENT IA)
-# ============================================================================
-
-
-class VectorizedSnakeEnv:
-    def __init__(self, n_envs=256, width=640, height=480, block_size=BLOCK_SIZE):
+class JeuVectorise:
+    def __init__(self, n_envs=256, largeur=640, hauteur=480, taille_bloc=TAILLE_BLOC):
         self.n_envs = n_envs
-        self.block_size = block_size
-        self.w = width
-        self.h = height
-        self.grid_w = width // block_size
-        self.grid_h = height // block_size
-        self.max_len = self.grid_w * self.grid_h // 2
+        self.taille_bloc = taille_bloc
+        self.l = largeur
+        self.h = hauteur
+        self.grille_l = largeur // taille_bloc
+        self.grille_h = hauteur // taille_bloc
+        self.max_len = self.grille_l * self.grille_h // 2
 
-        # Directions: 0=Right, 1=Down, 2=Left, 3=Up
-        self.move_vecs = np.array([[1, 0], [0, 1], [-1, 0], [0, -1]], dtype=np.int32)
-
-        self.heads = np.zeros((n_envs, 2), dtype=np.int32)
-        self.foods = np.zeros((n_envs, 2), dtype=np.int32)
-        self.dirs = np.zeros(n_envs, dtype=np.int32)
-        self.scores = np.zeros(n_envs, dtype=np.int32)
-        self.dones = np.zeros(n_envs, dtype=bool)
-        self.steps_since_apple = np.zeros(n_envs, dtype=np.int32)
-
-        # Corps: Init avec -1
-        self.bodies = np.full((n_envs, self.max_len, 2), -1, dtype=np.int32)
-        self.lengths = np.full(n_envs, 3, dtype=np.int32)
-
-        self.state_buffer = np.zeros(
-            (n_envs, 4, self.grid_h, self.grid_w), dtype=np.float32
+        # Vectors de mouvement: 0=Droite, 1=Bas, 2=Gauche, 3=Haut
+        self.vec_mouvements = np.array(
+            [[1, 0], [0, 1], [-1, 0], [0, -1]], dtype=np.int32
         )
 
-        # Pré-calcul du canal Murs (statique)
-        self.wall_channel = np.zeros((self.grid_h, self.grid_w), dtype=np.float32)
-        self.wall_channel[0, :] = 1.0  # Haut
-        self.wall_channel[-1, :] = 1.0  # Bas
-        self.wall_channel[:, 0] = 1.0  # Gauche
-        self.wall_channel[:, -1] = 1.0  # Droite
+        self.tetes = np.zeros((n_envs, 2), dtype=np.int32)
+        self.pommes = np.zeros((n_envs, 2), dtype=np.int32)
+        self.directions = np.zeros(n_envs, dtype=np.int32)
+        self.scores = np.zeros(n_envs, dtype=np.int32)
+        self.finis = np.zeros(n_envs, dtype=bool)
+        self.etapes_depuis_pomme = np.zeros(n_envs, dtype=np.int32)
+
+        # Corps des serpents
+        self.corps = np.full((n_envs, self.max_len, 2), -1, dtype=np.int32)
+        self.longueurs = np.full(n_envs, 3, dtype=np.int32)
+
+        self.buffer_etat = np.zeros(
+            (n_envs, 4, self.grille_h, self.grille_l), dtype=np.float32
+        )
+
+        # Canal des murs (pré-calculé car ça bouge pas)
+        self.canal_murs = np.zeros((self.grille_h, self.grille_l), dtype=np.float32)
+        self.canal_murs[0, :] = 1.0  # Haut
+        self.canal_murs[-1, :] = 1.0  # Bas
+        self.canal_murs[:, 0] = 1.0  # Gauche
+        self.canal_murs[:, -1] = 1.0  # Droite
 
         self.reset()
 
@@ -480,239 +85,233 @@ class VectorizedSnakeEnv:
         if n == 0:
             return
 
-        # Reset positions (Centre)
-        cx, cy = self.grid_w // 2, self.grid_h // 2
-        self.heads[indices] = [cx, cy]
-        self.dirs[indices] = 0  # Right
+        # On remet au centre
+        cx, cy = self.grille_l // 2, self.grille_h // 2
+        self.tetes[indices] = [cx, cy]
+        self.directions[indices] = 0  # Droite
 
-        # Reset Corps
-        self.bodies[indices, :, :] = -1
-        self.bodies[indices, 0] = [cx, cy]
-        self.bodies[indices, 1] = [cx - 1, cy]
-        self.bodies[indices, 2] = [cx - 2, cy]
-        self.lengths[indices] = 3
+        # On remet le corps
+        self.corps[indices, :, :] = -1
+        self.corps[indices, 0] = [cx, cy]
+        self.corps[indices, 1] = [cx - 1, cy]
+        self.corps[indices, 2] = [cx - 2, cy]
+        self.longueurs[indices] = 3
 
         self.scores[indices] = 0
-        self.dones[indices] = False
-        self.steps_since_apple[indices] = 0
+        self.finis[indices] = False
+        self.etapes_depuis_pomme[indices] = 0
 
-        self._spawn_foods(indices)
+        self._spawn_pommes(indices)
 
-    def _spawn_foods(self, indices):
+    def _spawn_pommes(self, indices):
         n = len(indices)
-        xs = np.random.randint(0, self.grid_w - 1, size=n)
-        ys = np.random.randint(0, self.grid_h - 1, size=n)
-        self.foods[indices] = np.stack([xs, ys], axis=1)
+        xs = np.random.randint(0, self.grille_l - 1, size=n)
+        ys = np.random.randint(0, self.grille_h - 1, size=n)
+        self.pommes[indices] = np.stack([xs, ys], axis=1)
 
     def step(self, actions):
-        """Action: [0=Straight, 1=Right, 2=Left]"""
-
-        # Calcul distance AVANT mouvement (pour Reward Shaping)
-        old_distances = np.abs(self.heads[:, 0] - self.foods[:, 0]) + np.abs(
-            self.heads[:, 1] - self.foods[:, 1]
+        """Calculer la prochaine étape pour tous les environnements."""
+        # Calcul distance AVANT (pour le reward shaping)
+        dist_avant = np.abs(self.tetes[:, 0] - self.pommes[:, 0]) + np.abs(
+            self.tetes[:, 1] - self.pommes[:, 1]
         )
 
-        # Mise à jour Direction
+        # Changement de direction
+        # actions: 0=tout droit, 1=droite, 2=gauche
         shifts = np.array([0, 1, -1])[actions]
-        self.dirs = (self.dirs + shifts) % 4
+        self.directions = (self.directions + shifts) % 4
 
-        # Calcul Nouvelles Têtes
-        current_moves = self.move_vecs[self.dirs]
-        new_heads = self.heads + current_moves
+        # Bouger la tête
+        mouvements = self.vec_mouvements[self.directions]
+        nouvelles_tetes = self.tetes + mouvements
 
-        # Collisions Mur
-        hit_wall = (
-            (new_heads[:, 0] < 0)
-            | (new_heads[:, 0] >= self.grid_w)
-            | (new_heads[:, 1] < 0)
-            | (new_heads[:, 1] >= self.grid_h)
+        # Collision Mur ?
+        mur_touche = (
+            (nouvelles_tetes[:, 0] < 0)
+            | (nouvelles_tetes[:, 0] >= self.grille_l)
+            | (nouvelles_tetes[:, 1] < 0)
+            | (nouvelles_tetes[:, 1] >= self.grille_h)
         )
 
-        # Collisions Corps
-        hit_body = np.zeros(self.n_envs, dtype=bool)
+        # Collision Corps ?
+        corps_touche = np.zeros(self.n_envs, dtype=bool)
         for i in range(self.n_envs):
-            head = new_heads[i]
-            length = self.lengths[i]
-            body_part = self.bodies[i, : length - 1]
-            if np.any(np.all(head == body_part, axis=1)):
-                hit_body[i] = True
+            tete = nouvelles_tetes[i]
+            longueur = self.longueurs[i]
+            # On vérifie si la tête touche une partie du corps (sauf la fin)
+            partie_corps = self.corps[i, : longueur - 1]
+            if np.any(np.all(tete == partie_corps, axis=1)):
+                corps_touche[i] = True
 
-        # Manger Pomme
-        ate_food = np.all(new_heads == self.foods, axis=1)
+        # Miam ?
+        pomme_mangee = np.all(nouvelles_tetes == self.pommes, axis=1)
 
-        # Famine
-        self.steps_since_apple += 1
-        self.steps_since_apple[ate_food] = 0
-        starved = self.steps_since_apple > 150
+        # Trop long sans manger ?
+        self.etapes_depuis_pomme += 1
+        self.etapes_depuis_pomme[pomme_mangee] = 0
+        famine = self.etapes_depuis_pomme > 150
 
-        # Reward Shaping (APRÈS mouvement)
-        safe_new_heads = np.clip(new_heads, [0, 0], [self.grid_w - 1, self.grid_h - 1])
-        new_distances = np.abs(safe_new_heads[:, 0] - self.foods[:, 0]) + np.abs(
-            safe_new_heads[:, 1] - self.foods[:, 1]
+        # Calcul Reward
+        nouvelles_tetes_safe = np.clip(
+            nouvelles_tetes, [0, 0], [self.grille_l - 1, self.grille_h - 1]
+        )
+        dist_apres = np.abs(nouvelles_tetes_safe[:, 0] - self.pommes[:, 0]) + np.abs(
+            nouvelles_tetes_safe[:, 1] - self.pommes[:, 1]
         )
 
-        distance_reward = 0.3 * (old_distances - new_distances).astype(np.float32)
+        # On encourage si on se rapproche (shaping)
+        reward_distance = 0.3 * (dist_avant - dist_apres).astype(np.float32)
 
-        # Calcul Rewards (Ratio 1:2 équilibré)
-        rewards = np.zeros(self.n_envs, dtype=np.float32)
-        rewards[ate_food] = 10.0  # Bonus (réduit pour équilibrer)
-        rewards += distance_reward  # Shaping
-        rewards += -0.01  # Time penalty
+        recompenses = np.zeros(self.n_envs, dtype=np.float32)
+        recompenses[pomme_mangee] = 10.0
+        recompenses += reward_distance
+        recompenses += -0.01  # Petite pénalité de temps
 
-        self.dones = hit_wall | hit_body | starved
-        rewards[self.dones] = -20.0  # Mort (réduit de -100 à -20)
+        self.finis = mur_touche | corps_touche | famine
+        recompenses[self.finis] = -20.0
 
-        # Mise à jour Physique
-        self.bodies[:, 1:] = self.bodies[:, :-1]
-        self.bodies[:, 0] = new_heads
+        # Mise à jour physiques
+        self.corps[:, 1:] = self.corps[:, :-1]
+        self.corps[:, 0] = nouvelles_tetes
 
-        self.lengths[ate_food] += 1
-        self.scores[ate_food] += 1
-        self._spawn_foods(np.where(ate_food)[0])
-        self.heads = new_heads
+        self.longueurs[pomme_mangee] += 1
+        self.scores[pomme_mangee] += 1
+        self._spawn_pommes(np.where(pomme_mangee)[0])
+        self.tetes = nouvelles_tetes
 
-        # Auto-Reset
-        final_scores = self.scores.copy()
-        final_dones = self.dones.copy()
+        # Auto-Reset des morts
+        scores_finaux = self.scores.copy()
+        finis_finaux = self.finis.copy()
 
-        if np.any(self.dones):
-            self.reset(np.where(self.dones)[0])
+        if np.any(self.finis):
+            self.reset(np.where(self.finis)[0])
 
-        return self.get_states(), rewards, final_dones, final_scores
+        return self.recuperer_etats(), recompenses, finis_finaux, scores_finaux
 
-    def get_states(self):
-        """Génère le tenseur (N, 4, H, W) pour l'IA."""
-        self.state_buffer.fill(0)
-        batch_ids = np.arange(self.n_envs)
+    def recuperer_etats(self):
+        """Fabrique l'image (tenseur) pour l'IA."""
+        self.buffer_etat.fill(0)
+        ids = np.arange(self.n_envs)
 
-        # Canal 3: Murs (broadcast du canal pré-calculé)
-        self.state_buffer[:, 3, :, :] = self.wall_channel
+        # 3. Murs
+        self.buffer_etat[:, 3, :, :] = self.canal_murs
 
-        # 1. Nourriture
-        fx, fy = self.foods[:, 0], self.foods[:, 1]
-        self.state_buffer[batch_ids, 2, fy, fx] = 1.0
+        # 2. Pommes
+        px, py = self.pommes[:, 0], self.pommes[:, 1]
+        self.buffer_etat[ids, 2, py, px] = 1.0
 
-        # 2. Têtes (Boussole)
-        hx, hy = self.heads[:, 0], self.heads[:, 1]
-        hx = np.clip(hx, 0, self.grid_w - 1)
-        hy = np.clip(hy, 0, self.grid_h - 1)
-        dir_values = (self.dirs + 1) * 0.2
-        self.state_buffer[batch_ids, 1, hy, hx] = dir_values
+        # 1. Têtes + Direction
+        hx, hy = self.tetes[:, 0], self.tetes[:, 1]
+        hx = np.clip(hx, 0, self.grille_l - 1)
+        hy = np.clip(hy, 0, self.grille_h - 1)
+        # On encode la direction (1 à 4 divisé par 5 pour normaliser)
+        val_dir = (self.directions + 1) * 0.2
+        self.buffer_etat[ids, 1, hy, hx] = val_dir
 
-        # 3. Corps (Gradient)
+        # 0. Corps (avec dégradé pour donner info de l'ordre)
         for i in range(self.n_envs):
-            length = self.lengths[i]
-            b = self.bodies[i, :length]
+            longueur = self.longueurs[i]
+            c = self.corps[i, :longueur]
 
-            indices = np.arange(length, dtype=np.float32)
-            values = 1.0 - (indices / length)
+            indices = np.arange(longueur, dtype=np.float32)
+            valeurs = 1.0 - (indices / longueur)
 
-            bx = np.clip(b[:, 0], 0, self.grid_w - 1)
-            by = np.clip(b[:, 1], 0, self.grid_h - 1)
+            cx = np.clip(c[:, 0], 0, self.grille_l - 1)
+            cy = np.clip(c[:, 1], 0, self.grille_h - 1)
 
-            self.state_buffer[i, 0, by, bx] = values
+            self.buffer_etat[i, 0, cy, cx] = valeurs
 
-        return self.state_buffer.copy()
+        return self.buffer_etat.copy()
 
-    def get_greedy_actions(self):
-        """Heuristique vectorisée : Mouvement sûr vers la pomme."""
-        safe_mask = np.zeros((self.n_envs, 3), dtype=bool)
+    def actions_gloutonnes(self):
+        """
+        Une petite IA heuristique (pas de réseau de neurones) qui essaie juste de pas mourir
+        et d'aller vers la pomme. Sert pour guider l'IA au début.
+        """
+        masque_sur = np.zeros((self.n_envs, 3), dtype=bool)
         distances = np.full((self.n_envs, 3), np.inf)
 
         for action in [0, 1, 2]:
-            # Simulation direction
             shift = 0 if action == 0 else (1 if action == 1 else -1)
-            potential_dirs = (self.dirs + shift) % 4
-            vecs = self.move_vecs[potential_dirs]
-            next_heads = self.heads + vecs
+            dirs_possibles = (self.directions + shift) % 4
+            vecs = self.vec_mouvements[dirs_possibles]
+            prochaines_tetes = self.tetes + vecs
 
-            # Check collisions murs
-            hit_wall = (
-                (next_heads[:, 0] < 0)
-                | (next_heads[:, 0] >= self.grid_w)
-                | (next_heads[:, 1] < 0)
-                | (next_heads[:, 1] >= self.grid_h)
+            # Murs
+            mur = (
+                (prochaines_tetes[:, 0] < 0)
+                | (prochaines_tetes[:, 0] >= self.grille_l)
+                | (prochaines_tetes[:, 1] < 0)
+                | (prochaines_tetes[:, 1] >= self.grille_h)
             )
 
-            # Check collisions corps (exclure la queue qui va bouger, et les cases -1)
-            body_hits = np.zeros(self.n_envs, dtype=bool)
+            # Corps
+            corps_hit = np.zeros(self.n_envs, dtype=bool)
             for i in range(self.n_envs):
-                head = next_heads[i]
-                # Exclure la dernière case (queue) car elle va se libérer
-                length = self.lengths[i]
-                body_part = self.bodies[i, : length - 1]
-                # Vérifier collision avec le corps valide
-                if np.any(np.all(head == body_part, axis=1)):
-                    body_hits[i] = True
+                tete = prochaines_tetes[i]
+                long = self.longueurs[i]
+                partie = self.corps[i, : long - 1]
+                if np.any(np.all(tete == partie, axis=1)):
+                    corps_hit[i] = True
 
-            is_safe = ~hit_wall & ~body_hits
+            est_sur = ~mur & ~corps_hit
+            masque_sur[:, action] = est_sur
 
-            safe_mask[:, action] = is_safe
-
-            # Calcul distance
-            dists = np.abs(next_heads[:, 0] - self.foods[:, 0]) + np.abs(
-                next_heads[:, 1] - self.foods[:, 1]
+            # Distance
+            dists = np.abs(prochaines_tetes[:, 0] - self.pommes[:, 0]) + np.abs(
+                prochaines_tetes[:, 1] - self.pommes[:, 1]
             )
-            distances[np.where(is_safe), action] = dists[np.where(is_safe)]
+            distances[np.where(est_sur), action] = dists[np.where(est_sur)]
 
-        # Choix de la meilleure action
-        best_actions = np.argmin(distances, axis=1)
+        meilleures_actions = np.argmin(distances, axis=1)
 
-        # Fallback si coincé
-        chosen_is_safe = safe_mask[np.arange(self.n_envs), best_actions]
-        unsafe_indices = np.where(~chosen_is_safe)[0]
+        # Si l'action choisie nous tue, on en prend une autre au hasard qui tue pas
+        choix_ok = masque_sur[np.arange(self.n_envs), meilleures_actions]
+        indices_dangereux = np.where(~choix_ok)[0]
 
-        if len(unsafe_indices) > 0:
-            for i in unsafe_indices:
-                safe_acts = np.where(safe_mask[i])[0]
-                if len(safe_acts) > 0:
-                    best_actions[i] = np.random.choice(safe_acts)
+        if len(indices_dangereux) > 0:
+            for i in indices_dangereux:
+                actions_sures = np.where(masque_sur[i])[0]
+                if len(actions_sures) > 0:
+                    meilleures_actions[i] = np.random.choice(actions_sures)
                 else:
-                    best_actions[i] = np.random.randint(0, 3)  # Mort inévitable
+                    meilleures_actions[i] = np.random.randint(0, 3)
 
-        return best_actions
+        return meilleures_actions
 
-    def get_safe_random_actions(self):
-        """Retourne des actions aléatoires SÛRES (pas de suicide)."""
-        safe_mask = np.zeros((self.n_envs, 3), dtype=bool)
+    def actions_aleatoires_sures(self):
+        """Retourne des actions au hasard MAIS qui ne tuent pas (si possible)"""
+        masque_sur = np.zeros((self.n_envs, 3), dtype=bool)
 
         for action in [0, 1, 2]:
             shift = 0 if action == 0 else (1 if action == 1 else -1)
-            potential_dirs = (self.dirs + shift) % 4
-            vecs = self.move_vecs[potential_dirs]
-            next_heads = self.heads + vecs
+            dirs = (self.directions + shift) % 4
+            vecs = self.vec_mouvements[dirs]
+            tetes = self.tetes + vecs
 
-            # Check collisions murs
-            hit_wall = (
-                (next_heads[:, 0] < 0)
-                | (next_heads[:, 0] >= self.grid_w)
-                | (next_heads[:, 1] < 0)
-                | (next_heads[:, 1] >= self.grid_h)
+            mur = (
+                (tetes[:, 0] < 0)
+                | (tetes[:, 0] >= self.grille_l)
+                | (tetes[:, 1] < 0)
+                | (tetes[:, 1] >= self.grille_h)
             )
 
-            # Check collisions corps
-            body_hits = np.zeros(self.n_envs, dtype=bool)
+            corps_hit = np.zeros(self.n_envs, dtype=bool)
             for i in range(self.n_envs):
-                head = next_heads[i]
-                length = self.lengths[i]
-                body_part = self.bodies[i, : length - 1]
-                if np.any(np.all(head == body_part, axis=1)):
-                    body_hits[i] = True
+                t = tetes[i]
+                long = self.longueurs[i]
+                p = self.corps[i, : long - 1]
+                if np.any(np.all(t == p, axis=1)):
+                    corps_hit[i] = True
 
-            is_safe = ~hit_wall & ~body_hits
-            safe_mask[:, action] = is_safe
+            masque_sur[:, action] = ~mur & ~corps_hit
 
-        # Choisir une action aléatoire parmi les actions sûres
-        random_actions = np.zeros(self.n_envs, dtype=np.int32)
+        actions_rand = np.zeros(self.n_envs, dtype=np.int32)
         for i in range(self.n_envs):
-            safe_acts = np.where(safe_mask[i])[0]
-            if len(safe_acts) > 0:
-                random_actions[i] = np.random.choice(safe_acts)
+            ok = np.where(masque_sur[i])[0]
+            if len(ok) > 0:
+                actions_rand[i] = np.random.choice(ok)
             else:
-                random_actions[i] = np.random.randint(0, 3)  # Mort inévitable
+                actions_rand[i] = np.random.randint(0, 3)
 
-        return random_actions
-
-
-if __name__ == "__main__":
-    main()
+        return actions_rand
