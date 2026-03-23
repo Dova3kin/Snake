@@ -31,24 +31,19 @@ def journal(message):
 # ============================================================================
 # CONFIGURATION (hyperparamètres justifiés)
 # ============================================================================
-NB_ENVIRONNEMENTS = 1000  # Jeux en parallèle
+NB_ENVIRONNEMENTS = 1000
 TAILLE_BATCH = 256
 MEMOIRE_MAX = 200_000
-
-# Learning rate: 0.0001-0.0005 est optimal pour DQN
 TAUX_APPRENTISSAGE = 0.0003
-
-# Gamma: 0.97 = horizon adapté à Snake (pas trop long, pas trop court)
 GAMMA = 0.97
+FREQ_ENTRAINEMENT = 4
+N_STEP = 3                  # N-step returns : propagation du signal sur 3 steps
+TRANSITIONS_MIN_DEBUT = 5_000  # Attendre ce nb de transitions avant le 1er update
 
-# Fréquence d'entraînement: toutes les 8 frames
-FREQ_ENTRAINEMENT = 8
-
-# Epsilon: schedule linéaire (plus prévisible que decay exponentiel)
+# Epsilon schedule linéaire
 EPSILON_DEPART = 1.0
 EPSILON_FIN = 0.05
-EPSILON_FRAMES = 50_000  # Steps pour atteindre epsilon_fin (indépendant du nb d'envs)
-                         # ~28 min à 30 frames/sec avec 1000 envs
+EPSILON_FRAMES = 50_000     # ~33 min à 25fps — exploration honnête sans heuristique
 
 
 # ============================================================================
@@ -251,13 +246,11 @@ class AgentIA:
         """Stocke les expériences en batch massif sans boucle Python."""
         self.memoire.stocker_batch(etats, actions, recompenses, etats_suivants, finis)
 
-    def entrainer_memoire(self):
-        """Apprentissage sur un mini-batch directement avec numpy."""
+    def entrainer_memoire(self, n_step=1):
         if len(self.memoire) > TAILLE_BATCH:
             etats, actions, rewards, next_states, dones = self.memoire.echantillonner(TAILLE_BATCH)
-
             self.entraineur.etape_d_apprentissage(
-                etats, actions, rewards, next_states, dones
+                etats, actions, rewards, next_states, dones, n_step=n_step
             )
 
     def moyenne_mobile(self, n=100):
@@ -293,6 +286,14 @@ def lancer_entrainement():
     derniere_eval_test = 0
 
     etats = env.recuperer_etats()
+
+    # Buffers N-step (deque de taille N_STEP par frame)
+    from collections import deque as deque_nstep
+    nstep_etats = deque_nstep(maxlen=N_STEP)
+    nstep_actions = deque_nstep(maxlen=N_STEP)
+    nstep_rewards = deque_nstep(maxlen=N_STEP)
+    nstep_finis = deque_nstep(maxlen=N_STEP)
+    nstep_etats_suivants = deque_nstep(maxlen=N_STEP)
 
     journal(f"Démarrage avec {NB_ENVIRONNEMENTS} environnements parallèles")
     journal(
@@ -365,28 +366,47 @@ def lancer_entrainement():
             prediction = agent.modele(etat_tensor)
         agent.modele.train()
 
-        # Epsilon-greedy strict : l'IA explore par elle-même et apprend de ses erreurs
-        # plutôt que de simplement imiter un algorithme (professeur).
+        # Epsilon-greedy avec exploration sûre.
+        # On évite les morts immédiates (mur/corps) pour générer des épisodes plus longs
+        # et plus de signaux positifs (pommes trouvées par hasard).
+        # PAS d'heuristique : le réseau apprend de sa propre distribution d'états.
         masque_exploration = np.random.random(NB_ENVIRONNEMENTS) < agent.epsilon
         actions_modele = torch.argmax(prediction, dim=1).cpu().numpy()
 
-        # Exploration : actions totalement aléatoires pour qu'il découvre les conséquences (murs, corps, pommes)
-        actions_aleatoires = np.random.randint(0, 3, size=NB_ENVIRONNEMENTS)
+        # Exploration : actions aléatoires qui n'entraînent pas de mort immédiate
+        actions_aleatoires = env.actions_aleatoires_sures()
 
         coups_finaux = np.where(masque_exploration, actions_aleatoires, actions_modele)
 
         # Step
         etats_suivants, recompenses, finis, scores = env.step(coups_finaux)
 
-        # Mémoriser
-        agent.memoriser_batch(etats, coups_finaux, recompenses, etats_suivants, finis)
+        # N-step: accumuler les transitions
+        nstep_etats.append(etats.copy())
+        nstep_actions.append(coups_finaux.copy())
+        nstep_rewards.append(recompenses.copy())
+        nstep_finis.append(finis.copy())
+        nstep_etats_suivants.append(etats_suivants.copy())
 
-        # Entraîner
-        if agent.nb_parties > 100:
-            if frames % FREQ_ENTRAINEMENT == 0:
-                agent.entrainer_memoire()
-        else:
-            agent.entrainer_memoire()
+        # Stocker la transition N-step une fois le buffer plein
+        if len(nstep_etats) == N_STEP:
+            gamma_returns = nstep_rewards[0].copy()
+            cumulative_done = nstep_finis[0].copy()
+            for i in range(1, N_STEP):
+                gamma_returns += (GAMMA ** i) * nstep_rewards[i] * (~cumulative_done)
+                cumulative_done = cumulative_done | nstep_finis[i]
+            agent.memoriser_batch(
+                nstep_etats[0],
+                nstep_actions[0],
+                gamma_returns,
+                nstep_etats_suivants[-1],
+                cumulative_done,
+            )
+
+        # Entraîner après le warmup initial
+        if len(agent.memoire) >= TRANSITIONS_MIN_DEBUT:
+            if agent.nb_frames % FREQ_ENTRAINEMENT == 0:
+                agent.entrainer_memoire(n_step=N_STEP)
 
         etats = etats_suivants
         agent.nb_frames += 1
