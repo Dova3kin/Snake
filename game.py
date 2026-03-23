@@ -165,11 +165,6 @@ class JeuVectorise:
 
     def step(self, actions: np.ndarray):
         """Une étape de simulation pour tous les environnements."""
-        # Distance AVANT
-        dist_avant = np.abs(self.tetes[:, 0] - self.pommes[:, 0]) + np.abs(
-            self.tetes[:, 1] - self.pommes[:, 1]
-        )
-
         # Changement de direction
         shifts = np.array([0, 1, -1])[actions]
         self.directions = (self.directions + shifts) % 4
@@ -200,20 +195,8 @@ class JeuVectorise:
         famine_timeout = 100 + self.longueurs * 3
         famine = self.etapes_depuis_pomme > famine_timeout
 
-        # Distance APRÈS
-        nouvelles_tetes_safe = np.clip(
-            nouvelles_tetes, [0, 0], [self.grille_l - 1, self.grille_h - 1]
-        )
-        dist_apres = np.abs(nouvelles_tetes_safe[:, 0] - self.pommes[:, 0]) + np.abs(
-            nouvelles_tetes_safe[:, 1] - self.pommes[:, 1]
-        )
-
-        # === REWARDS NORMALISÉS ===
-        # Tous du même ordre de grandeur pour apprentissage stable
+        # === REWARDS ===
         recompenses = np.full(self.n_envs, -0.001, dtype=np.float32)  # Pénalité temps
-
-        # Bonus approche (0.01 par case rapprochée)
-        recompenses += 0.01 * (dist_avant - dist_apres).astype(np.float32)
 
         # Pomme mangée = +1.0
         recompenses[pomme_mangee] = 1.0
