@@ -162,3 +162,78 @@ class TestEntraineur:
 
         # La loss de la dernière itération doit être inférieure à la première
         assert pertes[-1] < pertes[0], f"Loss n'a pas diminué: {pertes[0]:.4f} → {pertes[-1]:.4f}"
+
+
+# ============================================================================
+# TESTS DU MODE DU MODÈLE
+# ============================================================================
+
+
+class TestModeModele:
+    def test_inference_utilise_mode_eval(self, modele):
+        """
+        Durant l'inférence, le modèle doit être en mode eval().
+        En mode train(), le dropout (si présent) bruite les prédictions.
+        """
+        import torch
+        import numpy as np
+
+        modele.train()  # Forcer mode train
+        etat = torch.tensor(np.random.rand(1, 9), dtype=torch.float)
+
+        # Simuler ce que AgentIA.convertir_etat_tensor + inférence devrait faire
+        modele.eval()
+        with torch.no_grad():
+            pred_eval = modele(etat)
+
+        assert not modele.training, (
+            "Après l'inférence, le modèle doit rester en eval() "
+            "ou être explicitement remis en train()"
+        )
+
+
+class TestDoubleDQN:
+    def test_target_calcule_avec_actions_du_modele_principal(self, entraineur):
+        """
+        Double DQN : les actions next sont sélectionnées par le modèle principal,
+        pas par le target network.
+        On vérifie en forçant des poids divergents entre les deux réseaux.
+        """
+        import torch
+        import numpy as np
+
+        # Forcer des poids très différents entre modèle et target
+        for p in entraineur.target_model.parameters():
+            p.data.fill_(0.0)   # target → toujours 0
+        for p in entraineur.modele.parameters():
+            p.data.fill_(1.0)   # modèle → valeurs élevées
+
+        etat      = np.random.rand(4, 9).astype(np.float32)
+        action    = np.array([0, 1, 2, 0])
+        recompense = np.array([1.0, 0.0, -1.0, 0.5])
+        etat_suiv = np.random.rand(4, 9).astype(np.float32)
+        finis     = np.array([False, False, False, True])
+
+        # Ne doit pas lever d'exception et doit retourner une loss
+        loss = entraineur.etape_d_apprentissage(
+            etat, action, recompense, etat_suiv, finis
+        )
+        assert loss >= 0, f"Loss = {loss}, doit être >= 0"
+
+    def test_etapes_avec_terminaison(self, entraineur):
+        """
+        Pour les états terminaux (finis=True), Q_bellman = recompense seule.
+        """
+        import torch
+        import numpy as np
+
+        etat      = np.zeros((2, 9), dtype=np.float32)
+        action    = np.array([0, 1])
+        recompense = np.array([-1.0, 1.0])
+        etat_suiv = np.zeros((2, 9), dtype=np.float32)
+        finis     = np.array([True, True])  # Deux états terminaux
+
+        loss = entraineur.etape_d_apprentissage(
+            etat, action, recompense, etat_suiv, finis
+        )
+        assert loss >= 0

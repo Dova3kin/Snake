@@ -191,10 +191,13 @@ class Entraineur:
         # 1. Q-values actuelles
         pred = self.modele(etat)
 
-        # 2. Q-values cibles (avec target network)
+        # 2. Q-values cibles (Double DQN)
         with torch.no_grad():
+            # Modèle principal sélectionne la meilleure action
+            meilleures_actions = self.modele(etat_suiv).argmax(dim=1, keepdim=True)
+            # Target network évalue la valeur de cette action
             next_pred = self.target_model(etat_suiv)
-            max_next_q = next_pred.max(dim=1)[0]
+            max_next_q = next_pred.gather(1, meilleures_actions).squeeze(1)
 
         # 3. Calcul du target Q — vectorisé (pas de boucle Python)
         # Q_bellman = r + gamma * max_Q_next  (si not done)
