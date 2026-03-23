@@ -359,8 +359,10 @@ def lancer_entrainement():
         # Inférence
         etat_tensor = agent.convertir_etat_tensor(etats)
 
+        agent.modele.eval()
         with torch.no_grad():
             prediction = agent.modele(etat_tensor)
+        agent.modele.train()
 
         # Epsilon-greedy strict : l'IA explore par elle-même et apprend de ses erreurs
         # plutôt que de simplement imiter un algorithme (professeur).
