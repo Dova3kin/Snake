@@ -6,14 +6,13 @@ import sys
 import pygame
 from collections import deque
 
-# Imports de nos propres fichiers (avec les nouveaux noms français)
 from game import JeuVectorise, Point, TAILLE_BLOC
 from model import ReseauNeurones, Entraineur
 from dashboard import Dashboard
 from logger import JournalDeBord
 
 # ============================================================================
-# RÉGLAGES POUR AVOIR TOUJOURS LE MÊME RÉSULTAT (SEEDS)
+# SEEDS (reproductibilité)
 # ============================================================================
 GRAINE = 42
 random.seed(GRAINE)
@@ -24,161 +23,103 @@ if torch.cuda.is_available():
 
 
 def journal(message):
-    """Petite fonction pour afficher l'heure dans la console."""
+    """Affiche un message horodaté."""
     heure = time.strftime("%H:%M:%S", time.localtime())
     print(f"[{heure}] {message}")
 
 
 # ============================================================================
-# CONFIGURATION DE L'IA
+# CONFIGURATION (hyperparamètres justifiés)
 # ============================================================================
-NB_ENVIRONNEMENTS = 1000  # Nombre de parties en parallèle
-TAILLE_BATCH = 256  # Nombre d'exemples pour apprendre à chaque fois
-MEMOIRE_MAX = 200_000  # Taille de la mémoire courte
-TAUX_APPRENTISSAGE = 0.0001
-GAMMA = 0.99  # Importance du futur (0.99 = très important)
-FREQ_ENTRAINEMENT = 8  # On entraîne le modèle toutes les 8 frames
+NB_ENVIRONNEMENTS = 1000  # Jeux en parallèle
+TAILLE_BATCH = 256
+MEMOIRE_MAX = 200_000
 
-# Paramètres pour le "Prioritized Experience Replay" (PER)
-# C'est une technique pour apprendre plus des erreurs importantes
-PER_ALPHA = 0.6
-PER_BETA_DEBUT = 0.4
-PER_BETA_DUREE = 100_000
+# Learning rate: 0.0001-0.0005 est optimal pour DQN
+TAUX_APPRENTISSAGE = 0.0003
+
+# Gamma: 0.97 = horizon adapté à Snake (pas trop long, pas trop court)
+GAMMA = 0.97
+
+# Fréquence d'entraînement: toutes les 8 frames
+FREQ_ENTRAINEMENT = 8
+
+# Epsilon: schedule linéaire (plus prévisible que decay exponentiel)
+EPSILON_DEPART = 1.0
+EPSILON_FIN = 0.05
+EPSILON_FRAMES = 1_000_000  # Steps pour atteindre epsilon_fin (indépendant du nb d'envs)
 
 
 # ============================================================================
-# GESTION DE LA MÉMOIRE (PER)
+# MÉMOIRE EFFICACE (Ring Buffer avec numpy)
 # ============================================================================
 
 
-class ArbreSomme:
+class MemoireEfficace:
     """
-    Structure de données un peu complexe pour retrouver vite fait
-    les priorités des souvenirs. C'est un arbre binaire.
+    Ring buffer vectorisé pour Experience Replay.
+    Utilise des arrays NumPy purs pour zéro surcharge Python.
     """
 
-    def __init__(self, capacite):
+    def __init__(self, capacite, taille_etat=3079):
         self.capacite = capacite
-        self.arbre = np.zeros(2 * capacite - 1, dtype=np.float64)
-        self.donnees = np.zeros(capacite, dtype=object)
-        self.curseur = 0
-        self.nb_entrees = 0
+        self.etats = np.zeros((capacite, taille_etat), dtype=np.float32)
+        self.actions = np.zeros(capacite, dtype=np.int32)
+        self.recompenses = np.zeros(capacite, dtype=np.float32)
+        self.etats_suivants = np.zeros((capacite, taille_etat), dtype=np.float32)
+        self.finis = np.zeros(capacite, dtype=bool)
+        
+        self.position = 0
+        self.taille = 0
 
-    def _propager(self, idx, chgmt):
-        parent = (idx - 1) // 2
-        self.arbre[parent] += chgmt
-        if parent != 0:
-            self._propager(parent, chgmt)
-
-    def _retrouver(self, idx, s):
-        gauche = 2 * idx + 1
-        droite = gauche + 1
-
-        if gauche >= len(self.arbre):
-            return idx
-
-        if s <= self.arbre[gauche]:
-            return self._retrouver(gauche, s)
+    def stocker_batch(self, etats, actions, recompenses, etats_suivants, finis):
+        n = len(etats)
+        if self.position + n <= self.capacite:
+            self.etats[self.position:self.position+n] = etats
+            self.actions[self.position:self.position+n] = actions
+            self.recompenses[self.position:self.position+n] = recompenses
+            self.etats_suivants[self.position:self.position+n] = etats_suivants
+            self.finis[self.position:self.position+n] = finis
         else:
-            return self._retrouver(droite, s - self.arbre[gauche])
-
-    def total(self):
-        return self.arbre[0]
-
-    def ajouter(self, priorite, data):
-        idx = self.curseur + self.capacite - 1
-
-        self.donnees[self.curseur] = data
-        self.maj(idx, priorite)
-
-        self.curseur = (self.curseur + 1) % self.capacite
-        self.nb_entrees = min(self.nb_entrees + 1, self.capacite)
-
-    def maj(self, idx, priorite):
-        chgmt = priorite - self.arbre[idx]
-        self.arbre[idx] = priorite
-        self._propager(idx, chgmt)
-
-    def recuperer(self, s):
-        idx = self._retrouver(0, s)
-        data_idx = idx - self.capacite + 1
-        return idx, self.arbre[idx], self.donnees[data_idx]
-
-
-class MemoirePrioritaire:
-    """
-    Mémoire intelligente qui retient les moments importants.
-    """
-
-    def __init__(self, capacite, alpha=0.6, beta_debut=0.4, beta_frames=100_000):
-        self.arbre = ArbreSomme(capacite)
-        self.capacite = capacite
-        self.alpha = alpha
-        self.beta_debut = beta_debut
-        self.beta_frames = beta_frames
-        self.frame = 1
-        self.max_priorite = 1.0
-        self.min_priorite = 1e-5
-
-    def _calculer_beta(self):
-        # Beta augmente petit à petit jusqu'à 1
-        return min(
-            1.0,
-            self.beta_debut + self.frame * (1.0 - self.beta_debut) / self.beta_frames,
-        )
-
-    def stocker(self, experience):
-        # On donne la priorité max par défaut pour être sûr que ce soit revu au moins une fois
-        priorite = self.max_priorite**self.alpha
-        self.arbre.ajouter(priorite, experience)
+            part1 = self.capacite - self.position
+            part2 = n - part1
+            
+            self.etats[self.position:self.capacite] = etats[:part1]
+            self.actions[self.position:self.capacite] = actions[:part1]
+            self.recompenses[self.position:self.capacite] = recompenses[:part1]
+            self.etats_suivants[self.position:self.capacite] = etats_suivants[:part1]
+            self.finis[self.position:self.capacite] = finis[:part1]
+            
+            self.etats[0:part2] = etats[part1:]
+            self.actions[0:part2] = actions[part1:]
+            self.recompenses[0:part2] = recompenses[part1:]
+            self.etats_suivants[0:part2] = etats_suivants[part1:]
+            self.finis[0:part2] = finis[part1:]
+            
+        self.position = (self.position + n) % self.capacite
+        self.taille = min(self.taille + n, self.capacite)
 
     def echantillonner(self, batch_size):
-        batch = []
-        indices = []
-        priorites = []
-        segment = self.arbre.total() / batch_size
-        beta = self._calculer_beta()
-
-        for i in range(batch_size):
-            a = segment * i
-            b = segment * (i + 1)
-            s = np.random.uniform(a, b)
-
-            idx, priorite, data = self.arbre.recuperer(s)
-
-            # Sécurité si données invalides
-            if data is None or (isinstance(data, int) and data == 0):
-                s = np.random.uniform(0, self.arbre.total())
-                idx, priorite, data = self.arbre.recuperer(s)
-
-            batch.append(data)
-            indices.append(idx)
-            priorites.append(priorite)
-
-        # Calcul des poids
-        probabilites = np.array(priorites) / self.arbre.total()
-        probabilites = np.clip(probabilites, 1e-8, 1.0)
-        poids = (self.arbre.nb_entrees * probabilites) ** (-beta)
-        poids = poids / poids.max()
-
-        self.frame += 1
-        return batch, indices, poids
-
-    def maj_priorites(self, indices, erreurs_td):
-        for idx, erreur in zip(indices, erreurs_td):
-            prio = (abs(erreur) + self.min_priorite) ** self.alpha
-            self.max_priorite = max(self.max_priorite, prio)
-            self.arbre.maj(idx, prio)
+        indices = np.random.randint(0, self.taille, size=batch_size)
+        return (
+            self.etats[indices],
+            self.actions[indices],
+            self.recompenses[indices],
+            self.etats_suivants[indices],
+            self.finis[indices]
+        )
 
     def __len__(self):
-        return self.arbre.nb_entrees
+        return self.taille
+
+
+# ============================================================================
+# RENDU PYGAME
+# ============================================================================
 
 
 class RenduPygame:
-    """
-    Fait le lien entre le jeu vectorisé et Pygame
-    pour dessiner le serpent n°0 à l'écran
-    """
+    """Affiche le serpent n°0 à l'écran."""
 
     def __init__(self, env, index_env=0):
         self.env = env
@@ -190,7 +131,7 @@ class RenduPygame:
     def dessiner(self):
         self.surface.fill((0, 0, 0))
 
-        # On dessine le serpent
+        # Serpent avec dégradé
         points_serpent = self.serpent
         nb_points = len(points_serpent)
         for i, pt in enumerate(points_serpent):
@@ -203,7 +144,7 @@ class RenduPygame:
                 self.surface, (0, 50, 0), (pt.x, pt.y, TAILLE_BLOC, TAILLE_BLOC), 1
             )
 
-        # La pomme
+        # Pomme
         pomme = self.pomme
         pygame.draw.rect(
             self.surface, (255, 0, 0), (pomme.x, pomme.y, TAILLE_BLOC, TAILLE_BLOC)
@@ -228,110 +169,112 @@ class RenduPygame:
         return Point(fx * TAILLE_BLOC, fy * TAILLE_BLOC)
 
 
+# ============================================================================
+# AGENT IA
+# ============================================================================
+
+
 class AgentIA:
     def __init__(self):
         self.nb_parties = 0
-        self.epsilon = 1.0  # Au début, l'IA fait n'importe quoi (exploration max)
-        self.epsilon_min = 0.05
-        self.epsilon_decay = 0.9995  # Diminue très doucement
+        self.nb_frames = 0   # Compteur de steps de simulation (base du schedule epsilon)
 
-        # Système "coup de pied" si ça stagne
-        self.compteur_stagnation = 0
-        self.dernier_score_moyen = 0.0
-        self.seuil_stagnation = 500
+        # Epsilon: schedule linéaire
+        self.epsilon = EPSILON_DEPART
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        journal(f"Cerveau initialisé sur : {self.device}")
+        journal(f"Device: {self.device}")
 
-        # On crée le réseau de neurones
-        self.modele = ReseauNeurones(output_size=3).to(self.device)
+        # Réseau de neurones (MLP)
+        # Input: 3072 pixels + 7 features = 3079
+        self.modele = ReseauNeurones(input_size=3079, output_size=3).to(self.device)
         self.entraineur = Entraineur(
             self.modele, lr=TAUX_APPRENTISSAGE, gamma=GAMMA, device=self.device
         )
 
-        # La mémoire (Experience Replay)
-        self.memoire = MemoirePrioritaire(
-            capacite=MEMOIRE_MAX,
-            alpha=PER_ALPHA,
-            beta_debut=PER_BETA_DEBUT,
-            beta_frames=PER_BETA_DUREE,
-        )
-        journal("Mémoire activée")
+        # Mémoire efficace (ring buffer)
+        self.memoire = MemoireEfficace(capacite=MEMOIRE_MAX)
+        journal("Mémoire initialisée (ring buffer efficace)")
 
         self.logger = JournalDeBord()
         self.record = 0
-        self.scores_historique = deque(maxlen=2000)
+        self.scores_historique = deque(maxlen=500)
         self.debut_entrainement = time.time()
+
+        # === TEST SET INDÉPENDANT ===
+        # 10 environnements dédiés au test (pas utilisés pour l'entraînement)
+        self.scores_test = deque(maxlen=100)
+        self.derniere_eval = 0
+        self.eval_intervalle = 5000  # Éval toutes les 5000 parties
+
+    def evaluer_test_set(self, env_test):
+        """
+        Évalue le modèle sur un test set indépendant.
+        Exécute 100 parties en mode greedy (epsilon=0).
+        """
+        self.modele.eval()
+        scores = []
+
+        for _ in range(100):
+            env_test.reset()
+            done = False
+            while not done:
+                etat = env_test.recuperer_etats()
+                etat_tensor = torch.tensor(etat, dtype=torch.float).to(self.device)
+                with torch.no_grad():
+                    action = torch.argmax(self.modele(etat_tensor)).item()
+                _, _, done_arr, score_arr = env_test.step(np.array([action]))
+                done = done_arr[0]
+                if done:
+                    scores.append(score_arr[0])
+
+        self.modele.train()
+        return np.mean(scores), np.std(scores)
+
+    def epsilon_schedule(self):
+        """
+        Schedule linéaire basé sur les FRAMES (steps de simulation).
+        Robuste au nombre d'envs parallèles : 1000 envs = 1000 parties/frame,
+        mais toujours 1 frame/frame.
+        """
+        return max(
+            EPSILON_FIN,
+            EPSILON_DEPART
+            - (self.nb_frames / EPSILON_FRAMES) * (EPSILON_DEPART - EPSILON_FIN),
+        )
 
     def convertir_etat_tensor(self, etats_numpy):
         return torch.tensor(etats_numpy, dtype=torch.float).to(self.device)
 
     def memoriser_batch(self, etats, actions, recompenses, etats_suivants, finis):
-        """Stocke tout ce qui vient de se passer dans la mémoire."""
-        action_one_hots = np.zeros((NB_ENVIRONNEMENTS, 3), dtype=int)
-        action_one_hots[np.arange(NB_ENVIRONNEMENTS), actions] = 1
-
-        for i in range(NB_ENVIRONNEMENTS):
-            exp = (
-                etats[i],
-                action_one_hots[i],
-                recompenses[i],
-                etats_suivants[i],
-                finis[i],
-            )
-            self.memoire.stocker(exp)
+        """Stocke les expériences en batch massif sans boucle Python."""
+        self.memoire.stocker_batch(etats, actions, recompenses, etats_suivants, finis)
 
     def entrainer_memoire(self):
-        """C'est là que l'IA apprend en revoyant ses souvenirs."""
+        """Apprentissage sur un mini-batch directement avec numpy."""
         if len(self.memoire) > TAILLE_BATCH:
-            mini_batch, indices, poids = self.memoire.echantillonner(TAILLE_BATCH)
+            etats, actions, rewards, next_states, dones = self.memoire.echantillonner(TAILLE_BATCH)
 
-            # On filtre au cas où y'a des trucs bizarres
-            batch_valide = [
-                e for e in mini_batch if e is not None and not isinstance(e, int)
-            ]
-            if len(batch_valide) < TAILLE_BATCH // 2:
-                return
-
-            etats, actions, rewards, next_states, dones = zip(*batch_valide)
-
-            td_errors = self.entraineur.etape_d_apprentissage(
-                etats,
-                actions,
-                rewards,
-                next_states,
-                dones,
-                weights=poids[: len(batch_valide)],
+            self.entraineur.etape_d_apprentissage(
+                etats, actions, rewards, next_states, dones
             )
 
-            if td_errors is not None and len(td_errors) > 0:
-                self.memoire.maj_priorites(indices[: len(td_errors)], td_errors)
+    def moyenne_mobile(self, n=100):
+        """Moyenne sur les N dernières parties."""
+        if len(self.scores_historique) == 0:
+            return 0.0
+        recent = list(self.scores_historique)[-n:]
+        return sum(recent) / len(recent)
 
-    def maj_epsilon(self):
-        if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
 
-    def verifier_stagnation(self, score_moyen):
-        """Si le score n'augmente plus, on ré-augmente epsilon pour explorer."""
-        if score_moyen <= self.dernier_score_moyen:
-            self.compteur_stagnation += 1
-        else:
-            self.compteur_stagnation = 0
-            self.dernier_score_moyen = score_moyen
-
-        if self.compteur_stagnation >= self.seuil_stagnation and self.epsilon < 0.3:
-            vieux_eps = self.epsilon
-            self.epsilon = min(0.4, self.epsilon + 0.1)
-            self.compteur_stagnation = 0
-            journal(
-                f"COUP DE POUCE : Epsilon augmente de {vieux_eps:.3f} à {self.epsilon:.3f}"
-            )
-            return True
-        return False
+# ============================================================================
+# BOUCLE D'ENTRAÎNEMENT
+# ============================================================================
 
 
 def lancer_entrainement():
     env = JeuVectorise(n_envs=NB_ENVIRONNEMENTS)
+    env_test = JeuVectorise(n_envs=1)  # Test set indépendant
     agent = AgentIA()
     dashboard = Dashboard()
     visu = RenduPygame(env, index_env=0)
@@ -344,12 +287,20 @@ def lancer_entrainement():
     dernier_update_graph = 0
     last_screen_time = time.time()
 
+    # Métriques test set
+    test_scores = []
+    derniere_eval_test = 0
+
     etats = env.recuperer_etats()
 
-    journal(f"C'est parti ! {NB_ENVIRONNEMENTS} serpents s'entraînent en même temps.")
+    journal(f"Démarrage avec {NB_ENVIRONNEMENTS} environnements parallèles")
+    journal(
+        f"Epsilon schedule: {EPSILON_DEPART} → {EPSILON_FIN} sur {EPSILON_FRAMES} frames"
+    )
+    journal("Test set: évaluation toutes les 5000 parties")
 
     while True:
-        # --- Gestion Clavier/Souris ---
+        # Gestion événements
         evenements = pygame.event.get()
         action_user = None
         for event in evenements:
@@ -371,7 +322,6 @@ def lancer_entrainement():
             elif action_user == "EXPORT":
                 agent.logger.exporter_excel()
             elif isinstance(action_user, tuple):
-                # Sauvegarder ou Charger
                 cmd, fichier = action_user
                 if cmd == "SAVE":
                     temps_jeu = time.time() - agent.debut_entrainement
@@ -383,7 +333,7 @@ def lancer_entrainement():
                         epsilon=agent.epsilon,
                         record=agent.record,
                     )
-                    journal(f"Sauvegardé sous : {fichier}")
+                    journal(f"Sauvegardé: {fichier}")
                 elif cmd == "LOAD":
                     res = agent.modele.charger(nom_fichier=fichier, device=agent.device)
                     if res is not None:
@@ -396,42 +346,39 @@ def lancer_entrainement():
                         if opt is not None:
                             try:
                                 agent.entraineur.optimiseur.load_state_dict(opt)
-                            except Exception as e:
-                                journal(
-                                    f"Pas pu charger l'optimiseur ({e}), on repart à zéro pour lui."
-                                )
+                            except RuntimeError as e:
+                                journal(f"Optimiseur non chargé: {e}")
                         agent.entraineur.target_model.load_state_dict(
                             agent.modele.state_dict()
                         )
-                        journal(f"Chargé : {fichier}")
+                        journal(f"Chargé: {fichier}")
 
-        # --- L'IA réfléchit ---
+        # Mise à jour epsilon (schedule linéaire)
+        agent.epsilon = agent.epsilon_schedule()
+
+        # Inférence
         etat_tensor = agent.convertir_etat_tensor(etats)
 
         with torch.no_grad():
             prediction = agent.modele(etat_tensor)
 
-        # Stratégie Epsilon-Greedy : Exploration vs Imitation
-        masque_imitation = np.random.random(NB_ENVIRONNEMENTS) < agent.epsilon
+        # Epsilon-greedy strict : l'IA explore par elle-même et apprend de ses erreurs
+        # plutôt que de simplement imiter un algorithme (professeur).
+        masque_exploration = np.random.random(NB_ENVIRONNEMENTS) < agent.epsilon
         actions_modele = torch.argmax(prediction, dim=1).cpu().numpy()
 
-        # Le "professeur" (algo glouton) donne la bonne réponse
-        actions_prof = env.actions_gloutonnes()
+        # Exploration : actions totalement aléatoires pour qu'il découvre les conséquences (murs, corps, pommes)
+        actions_aleatoires = np.random.randint(0, 3, size=NB_ENVIRONNEMENTS)
 
-        coups_finaux = np.where(masque_imitation, actions_prof, actions_modele)
+        coups_finaux = np.where(masque_exploration, actions_aleatoires, actions_modele)
 
-        # Un peu de hasard pur pour débloquer les situations coincées
-        masque_random = np.random.random(NB_ENVIRONNEMENTS) < 0.05
-        if np.any(masque_random):
-            actions_sur = env.actions_aleatoires_sures()
-            coups_finaux = np.where(masque_random, actions_sur, coups_finaux)
-
-        # --- On joue ---
+        # Step
         etats_suivants, recompenses, finis, scores = env.step(coups_finaux)
 
-        # --- On mémorise ---
+        # Mémoriser
         agent.memoriser_batch(etats, coups_finaux, recompenses, etats_suivants, finis)
 
+        # Entraîner
         if agent.nb_parties > 100:
             if frames % FREQ_ENTRAINEMENT == 0:
                 agent.entrainer_memoire()
@@ -439,12 +386,12 @@ def lancer_entrainement():
             agent.entrainer_memoire()
 
         etats = etats_suivants
+        agent.nb_frames += 1
 
-        # --- Suivi des scores ---
+        # Suivi scores
         nb_morts = np.sum(finis)
         if nb_morts > 0:
             agent.nb_parties += nb_morts
-            agent.maj_epsilon()
             scores_morts = scores[finis]
             for s in scores_morts:
                 agent.scores_historique.append(s)
@@ -452,8 +399,7 @@ def lancer_entrainement():
         max_actuel = np.max(scores)
         if max_actuel > agent.record:
             agent.record = max_actuel
-            journal(f"Nouveau Record : {agent.record}")
-            # Auto-save record
+            journal(f"🏆 Nouveau Record: {agent.record}")
             agent.modele.sauvegarder(
                 nb_parties=agent.nb_parties,
                 temps_total=time.time() - agent.debut_entrainement,
@@ -465,17 +411,24 @@ def lancer_entrainement():
         frames += 1
         if time.time() - t0 > 1.0:
             tps = frames * NB_ENVIRONNEMENTS
+            moyenne = agent.moyenne_mobile(100)
             journal(
-                f"{tps} TPS | Parties: {agent.nb_parties} | Eps: {agent.epsilon:.3f} | Record: {agent.record}"
+                f"{tps} TPS | Parties: {agent.nb_parties} | Eps: {agent.epsilon:.3f} | "
+                f"Moy100: {moyenne:.1f} | Record: {agent.record}"
             )
-
-            moyenne = 0
-            if agent.scores_historique:
-                moyenne = sum(agent.scores_historique) / len(agent.scores_historique)
 
             agent.logger.noter_stats(
                 agent.nb_parties, agent.epsilon, agent.record, moyenne, tps
             )
+
+            # === ÉVALUATION TEST SET ===
+            if agent.nb_parties - derniere_eval_test >= agent.eval_intervalle:
+                derniere_eval_test = agent.nb_parties
+                moy_test, std_test = agent.evaluer_test_set(env_test)
+                test_scores.append(moy_test)
+                journal(
+                    f"📊 TEST SET: {moy_test:.1f} ± {std_test:.1f} (100 parties greedy)"
+                )
 
             frames = 0
             t0 = time.time()
@@ -488,12 +441,13 @@ def lancer_entrainement():
 
         # Rendu visuel
         if dashboard.state == "RUNNING":
-            activations = agent.modele.recuperer_activations(
-                etat_tensor[0].unsqueeze(0)
-            )
             surface_jeu = visu.dessiner()
             dashboard.update_game(surface_jeu)
-            dashboard.update_nn(agent.modele, activations)
+
+            # Passer les canaux pixels pour l'affichage (reshape en 4D)
+            etat_pixels = etat_tensor[:1, :3072].view(1, 4, 24, 32)
+            dashboard.update_nn([etat_pixels])
+
             dashboard.update_info(
                 agent.nb_parties,
                 time.time() - agent.debut_entrainement,
@@ -501,16 +455,14 @@ def lancer_entrainement():
                 agent.record,
             )
 
-        # Graphiques (pas tout le temps pour pas ramer)
+        # Graphiques
         if agent.nb_parties - dernier_update_graph > 100:
             dernier_update_graph = agent.nb_parties
             if len(agent.scores_historique) > 0:
-                recent = list(agent.scores_historique)[-100:]
-                moy = sum(recent) / len(recent)
+                moy = agent.moyenne_mobile(100)
 
-                # Ajustement auto du taux d'apprentissage
+                # Ajustement LR
                 agent.entraineur.scheduler.step(moy)
-                agent.verifier_stagnation(moy)
 
                 donnees_graphique.append(moy)
                 score_cumule += moy
