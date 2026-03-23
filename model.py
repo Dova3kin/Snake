@@ -14,51 +14,30 @@ import copy
 
 class ReseauNeurones(nn.Module):
     """
-    Le cerveau du serpent
+    MLP compact pour Snake.
+
+    Entrée: 9 features (sans pixels)
+    Sortie: 3 actions (tout droit, droite, gauche)
+
+    Architecture: 9→128→64→3
+    Pas de dropout : inutile avec si peu de paramètres.
     """
 
-    def __init__(self, output_size=3, input_channels=4):
+    def __init__(self, input_size=9, output_size=3):
         super().__init__()
-        # On a 4 "images" en entrée : Corps, Tête, Pomme, Murs
-        # Taille 24x32
-
-        # Couche 1: On cherche des formes simples
-        self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm2d(32)
-
-        # Couche 2: On combine les formes (et on réduit la taille de l'image)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1)
-        self.bn2 = nn.BatchNorm2d(64)
-
-        # Couche 3: Des concepts plus abstraits
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1)
-        self.bn3 = nn.BatchNorm2d(128)
-
-        # On met tout à plat pour la décision finale
-        # Calcul taille: 128 filtres * 6 hauteur * 8 largeur = 6144
-        self.fc1 = nn.Linear(6144, 512)
-        self.dropout = nn.Dropout(0.2)  # Pour éviter d'apprendre par cœur
-        self.fc2 = nn.Linear(512, 128)
-        self.decision = nn.Linear(128, output_size)
+        self.fc1 = nn.Linear(input_size, 128)
+        self.fc2 = nn.Linear(128, 64)
+        self.fc3 = nn.Linear(64, output_size)
 
     def forward(self, x):
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
-
-        x = x.view(x.size(0), -1)  # Aplatissement
-
+        if len(x.shape) == 4:
+            x = x.view(x.size(0), -1)
+        elif len(x.shape) == 3:
+            x = x.view(1, -1)
         x = F.relu(self.fc1(x))
-        x = self.dropout(x)
         x = F.relu(self.fc2(x))
-        x = self.decision(x)
+        x = self.fc3(x)
         return x
-
-    def recuperer_activations(self, x):
-        """affichage graphique."""
-        if len(x.shape) == 3:
-            x = torch.unsqueeze(x, 0)
-        return [x]
 
     def sauvegarder(
         self,
@@ -78,6 +57,7 @@ class ReseauNeurones(nn.Module):
             chemin += ".pth"
 
         donnees = {
+            "version": 2,  # Versioning pour compatibilité future
             "etat_modele": self.state_dict(),
             "nb_parties": nb_parties,
             "temps_total": temps_total,
@@ -88,7 +68,7 @@ class ReseauNeurones(nn.Module):
         try:
             torch.save(donnees, chemin)
         except Exception as e:
-            print(f"erreur de sauvegarde : {e}")
+            print(f"Erreur de sauvegarde : {e}")
 
     def charger(self, nom_fichier="modele.pth", device="cpu"):
         dossier = "./model"
@@ -98,7 +78,7 @@ class ReseauNeurones(nn.Module):
             try:
                 checkpoint = torch.load(chemin, map_location=device)
 
-                # Si c'est notre nouveau format
+                # Format v2 (nouveau)
                 if isinstance(checkpoint, dict) and "etat_modele" in checkpoint:
                     self.load_state_dict(checkpoint["etat_modele"])
                     return (
@@ -108,7 +88,7 @@ class ReseauNeurones(nn.Module):
                         checkpoint.get("epsilon", None),
                         checkpoint.get("record", 0),
                     )
-                # Compatibilité avec les anciens modèles (anglais/legacy)
+                # Format legacy (anglais)
                 elif isinstance(checkpoint, dict) and "model_state" in checkpoint:
                     self.load_state_dict(checkpoint["model_state"])
                     return (
@@ -119,7 +99,7 @@ class ReseauNeurones(nn.Module):
                         checkpoint.get("record", 0),
                     )
                 else:
-                    # Vieux format brut
+                    # Très vieux format
                     self.load_state_dict(checkpoint)
                     return 0, 0, None, None, 0
             except Exception as e:
@@ -129,30 +109,33 @@ class ReseauNeurones(nn.Module):
 
 
 # ============================================================================
-# COACH (ENTRAÎNEMENT)
+# ENTRAINEUR (COACH)
 # ============================================================================
 
 
 class Entraineur:
     """
-    C'est lui qui apprend au modèle.
+    Entraîne le modèle avec DQN.
+
+    Hyperparamètres justifiés:
+    - gamma=0.97 : Horizon adapté à Snake (pas trop long)
+    - tau=0.005 : Soft update lente pour stabilité
+    - SmoothL1Loss : Robuste aux Q-values extrêmes
     """
 
     def __init__(self, modele, lr, gamma, device="cpu", tau=0.005):
         self.lr = lr
         self.gamma = gamma
         self.modele = modele
-        self.tau = tau  # Vitesse de mise à jour du modèle cible
+        self.tau = tau
         self.device = device
 
-        # On crée une copie du modèle pour stabiliser l'apprentissage
+        # Target network pour stabiliser l'apprentissage
         self.target_model = copy.deepcopy(modele).to(device)
         self.target_model.eval()
 
         self.optimiseur = optim.Adam(modele.parameters(), lr=self.lr)
-
-        # On utilise Huber Loss parce que c'est moins sensible aux gros bugs de valeurs
-        self.critere = nn.SmoothL1Loss()
+        self.critere = nn.SmoothL1Loss()  # Huber loss
 
         self.scheduler = ReduceLROnPlateau(
             self.optimiseur,
@@ -164,7 +147,7 @@ class Entraineur:
         )
 
     def mise_a_jour_douce(self):
-        """Mise à jour progressive du Target Network."""
+        """Soft update du target network."""
         for target_param, local_param in zip(
             self.target_model.parameters(), self.modele.parameters()
         ):
@@ -172,69 +155,65 @@ class Entraineur:
                 self.tau * local_param.data + (1.0 - self.tau) * target_param.data
             )
 
-    def etape_d_apprentissage(
-        self, etat, action, recompense, etat_suiv, finis, weights=None
-    ):
-        # On transforme tout en tenseurs PyTorch
+    def etape_d_apprentissage(self, etat, action, recompense, etat_suiv, finis):
+        """
+        Une étape d'apprentissage DQN.
+
+        Args:
+            etat: états actuels (batch)
+            action: actions prises (entiers 0, 1, 2)
+            recompense: récompenses reçues
+            etat_suiv: états suivants
+            finis: booléens indiquant fin de partie
+        """
+        # Conversion en tenseurs
         etat = torch.tensor(np.array(etat), dtype=torch.float).to(self.device)
         etat_suiv = torch.tensor(np.array(etat_suiv), dtype=torch.float).to(self.device)
         action = torch.tensor(np.array(action), dtype=torch.long).to(self.device)
         recompense = torch.tensor(np.array(recompense), dtype=torch.float).to(
             self.device
         )
+        finis = torch.tensor(np.array(finis), dtype=torch.bool).to(self.device)
 
-        if weights is not None:
-            weights = torch.tensor(weights, dtype=torch.float).to(self.device)
+        # Aplatir si nécessaire
+        if len(etat.shape) == 4:
+            etat = etat.view(etat.size(0), -1)
+            etat_suiv = etat_suiv.view(etat_suiv.size(0), -1)
 
-        # On s'assure qu'on a bien une dimension "batch"
-        if len(etat.shape) == 1 or len(etat.shape) == 3:
-            etat = torch.unsqueeze(etat, 0)
-            etat_suiv = torch.unsqueeze(etat_suiv, 0)
-            action = torch.unsqueeze(action, 0)
-            recompense = torch.unsqueeze(recompense, 0)
-            finis = (finis,)
-            if weights is not None:
-                weights = torch.unsqueeze(weights, 0)
+        # S'assurer d'avoir dimension batch
+        if len(etat.shape) == 1:
+            etat = etat.unsqueeze(0)
+            etat_suiv = etat_suiv.unsqueeze(0)
+            action = action.unsqueeze(0)
+            recompense = recompense.unsqueeze(0)
+            finis = finis.unsqueeze(0)
 
-        # 1. Qu'est-ce que le modèle pense ?
+        # 1. Q-values actuelles
         pred = self.modele(etat)
 
-        # 2. Qu'est-ce qu'il devrait penser ? (Target)
+        # 2. Q-values cibles (avec target network)
         with torch.no_grad():
             next_pred = self.target_model(etat_suiv)
+            max_next_q = next_pred.max(dim=1)[0]
 
+        # 3. Calcul du target Q — vectorisé (pas de boucle Python)
+        # Q_bellman = r + gamma * max_Q_next  (si not done)
+        # Q_bellman = r                       (si done)
+        Q_bellman = recompense + self.gamma * max_next_q * (~finis).float()
+
+        # Mettre à jour uniquement la Q-value de l'action prise
         target = pred.clone()
-        erreurs_td = []
+        target.scatter_(1, action.unsqueeze(1), Q_bellman.unsqueeze(1))
 
-        for idx in range(len(finis)):
-            Q_nouveau = recompense[idx]
-            if not finis[idx]:
-                Q_nouveau = recompense[idx] + self.gamma * torch.max(next_pred[idx])
-
-            valeur_actuelle = pred[idx][torch.argmax(action[idx]).item()]
-
-            # Calcul de l'erreur (surprise)
-            erreur = abs(Q_nouveau - valeur_actuelle).item()
-            erreurs_td.append(erreur)
-
-            target[idx][torch.argmax(action[idx]).item()] = Q_nouveau
-
+        # 4. Backprop
         self.optimiseur.zero_grad()
-
-        # Calcul de la perte (Loss)
-        if weights is not None:
-            loss_fn = nn.SmoothL1Loss(reduction="none")
-            loss_element = loss_fn(target, pred)
-            loss = (loss_element.mean(dim=1) * weights).mean()
-        else:
-            loss = self.critere(target, pred)
-
+        loss = self.critere(pred, target)
         loss.backward()
 
-        # On empêche les gradients d'exploser
+        # Gradient clipping pour stabilité
         torch.nn.utils.clip_grad_norm_(self.modele.parameters(), max_norm=1.0)
 
         self.optimiseur.step()
         self.mise_a_jour_douce()
 
-        return np.array(erreurs_td)
+        return loss.item()

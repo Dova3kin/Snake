@@ -61,7 +61,7 @@ class MemoireEfficace:
     Utilise des arrays NumPy purs pour zéro surcharge Python.
     """
 
-    def __init__(self, capacite, taille_etat=3079):
+    def __init__(self, capacite, taille_etat=9):
         self.capacite = capacite
         self.etats = np.zeros((capacite, taille_etat), dtype=np.float32)
         self.actions = np.zeros(capacite, dtype=np.int32)
@@ -185,15 +185,15 @@ class AgentIA:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         journal(f"Device: {self.device}")
 
-        # Réseau de neurones (MLP)
-        # Input: 3072 pixels + 7 features = 3079
-        self.modele = ReseauNeurones(input_size=3079, output_size=3).to(self.device)
+        # Réseau de neurones (MLP compact)
+        # Input: 9 features (sans pixels)
+        self.modele = ReseauNeurones(input_size=9, output_size=3).to(self.device)
         self.entraineur = Entraineur(
             self.modele, lr=TAUX_APPRENTISSAGE, gamma=GAMMA, device=self.device
         )
 
         # Mémoire efficace (ring buffer)
-        self.memoire = MemoireEfficace(capacite=MEMOIRE_MAX)
+        self.memoire = MemoireEfficace(capacite=MEMOIRE_MAX, taille_etat=9)
         journal("Mémoire initialisée (ring buffer efficace)")
 
         self.logger = JournalDeBord()
@@ -443,10 +443,6 @@ def lancer_entrainement():
         if dashboard.state == "RUNNING":
             surface_jeu = visu.dessiner()
             dashboard.update_game(surface_jeu)
-
-            # Passer les canaux pixels pour l'affichage (reshape en 4D)
-            etat_pixels = etat_tensor[:1, :3072].view(1, 4, 24, 32)
-            dashboard.update_nn([etat_pixels])
 
             dashboard.update_info(
                 agent.nb_parties,

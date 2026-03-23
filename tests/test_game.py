@@ -83,29 +83,20 @@ class TestReset:
 
 class TestEtats:
     def test_forme_etats_correcte(self, petit_env):
-        """recuperer_etats() retourne la bonne forme."""
+        """recuperer_etats() retourne la bonne forme : 9 features compactes."""
         etats = petit_env.recuperer_etats()
-        # 4 canaux x 4 rows x 5 cols = 80 pixels + 7 features = 87
-        # Pour 100x80 avec taille_bloc=20: grille_l=5, grille_h=4
-        grille_l = petit_env.grille_l
-        grille_h = petit_env.grille_h
-        expected_pixels = 4 * grille_h * grille_l
-        assert etats.shape == (4, expected_pixels + 7)
+        assert etats.shape == (4, 9)
 
     def test_etats_normalises(self, petit_env):
-        """Les features augmentées sont entre 0 et 1 (approximativement)."""
+        """Les features sont dans les bonnes plages."""
         etats = petit_env.recuperer_etats()
-        grille_l = petit_env.grille_l
-        grille_h = petit_env.grille_h
-        pixels = 4 * grille_h * grille_l
-        features = etats[:, pixels:]
         # Distance normalisée: entre 0 et 1
-        assert np.all(features[:, 0] >= 0)
-        assert np.all(features[:, 0] <= 1)
+        assert np.all(etats[:, 0] >= 0)
+        assert np.all(etats[:, 0] <= 1)
         # Dangers: 0 ou 1
-        assert np.all((features[:, 3] == 0) | (features[:, 3] == 1))
-        assert np.all((features[:, 4] == 0) | (features[:, 4] == 1))
-        assert np.all((features[:, 5] == 0) | (features[:, 5] == 1))
+        assert np.all((etats[:, 3] == 0) | (etats[:, 3] == 1))
+        assert np.all((etats[:, 4] == 0) | (etats[:, 4] == 1))
+        assert np.all((etats[:, 5] == 0) | (etats[:, 5] == 1))
 
 
 # ============================================================================
@@ -224,6 +215,32 @@ class TestFamineAdaptative:
         assert not finis[0], (
             "Longueur 30 : ne devrait PAS mourir à 181 steps "
             "(timeout = 100 + 30*3 = 190)"
+        )
+
+
+class TestEtatEnrichi:
+    def test_forme_etat_9_features(self, petit_env):
+        """recuperer_etats() doit retourner 9 features (plus de pixels)."""
+        etats = petit_env.recuperer_etats()
+        assert etats.shape == (4, 9), (
+            f"Shape = {etats.shape}, attendu (4, 9). "
+            f"Les 3072 pixels doivent être supprimés."
+        )
+
+    def test_position_tete_normalisee(self, env_simple):
+        """Features 7 et 8 sont la position normalisée de la tête (entre 0 et 1)."""
+        etats = env_simple.recuperer_etats()
+        pos_x = etats[0, 7]
+        pos_y = etats[0, 8]
+        assert 0.0 <= pos_x <= 1.0, f"pos_x = {pos_x} doit être dans [0, 1]"
+        assert 0.0 <= pos_y <= 1.0, f"pos_y = {pos_y} doit être dans [0, 1]"
+
+    def test_pas_de_pixels_dans_etat(self, petit_env):
+        """Le vecteur d'état ne doit pas contenir 3072 pixels."""
+        etats = petit_env.recuperer_etats()
+        assert etats.shape[1] < 100, (
+            f"Le vecteur d'état a {etats.shape[1]} features. "
+            f"Les pixels (3072) doivent être supprimés."
         )
 
 

@@ -22,11 +22,11 @@ class ConfigEntrainement:
     taille_batch: int = 256             # Taille du mini-batch
 
     # === RÉSEAU ===
-    input_size: int = 3079              # 3072 pixels + 7 features
+    input_size: int = 9                 # 7 features existantes + 2 position tête normalisée
+                                        # Suppression des 3072 pixels MLP-inutilisables
     output_size: int = 3               # 3 actions: tout droit, droite, gauche
-    taille_couche_1: int = 256
-    taille_couche_2: int = 128
-    dropout: float = 0.1
+    taille_couche_1: int = 128          # Réduit (était 256, inutile avec 9 inputs)
+    taille_couche_2: int = 64           # Réduit (était 128)
 
     # === OPTIMISEUR ===
     taux_apprentissage: float = 0.0003  # Adam LR

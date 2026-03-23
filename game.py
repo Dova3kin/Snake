@@ -77,18 +77,6 @@ class JeuVectorise:
         self.corps = np.full((n_envs, self.max_len, 2), -1, dtype=np.int32)
         self.longueurs = np.full(n_envs, 3, dtype=np.int32)
 
-        # Buffer pour les états (pixels)
-        self.buffer_etat = np.zeros(
-            (n_envs, 4, self.grille_h, self.grille_l), dtype=np.float32
-        )
-
-        # Canal des murs (pré-calculé)
-        self.canal_murs = np.zeros((self.grille_h, self.grille_l), dtype=np.float32)
-        self.canal_murs[0, :] = 1.0
-        self.canal_murs[-1, :] = 1.0
-        self.canal_murs[:, 0] = 1.0
-        self.canal_murs[:, -1] = 1.0
-
         self.reset()
 
     def reset(self, indices=None):
@@ -254,49 +242,10 @@ class JeuVectorise:
 
     def recuperer_etats(self):
         """
-        Retourne l'état augmenté: pixels aplatis + features calculées.
-        Shape: (n_envs, 3079) = 3072 pixels + 7 features
+        Retourne 9 features par environnement.
+        Plus de pixels : le MLP ne peut pas exploiter la structure spatiale.
+        Shape: (n_envs, 9)
         """
-        # 1. Construire les canaux de pixels
-        self.buffer_etat.fill(0)
-        ids = np.arange(self.n_envs)
-
-        # Murs
-        self.buffer_etat[:, 3, :, :] = self.canal_murs
-
-        # Pommes
-        px, py = self.pommes[:, 0], self.pommes[:, 1]
-        self.buffer_etat[ids, 2, py, px] = 1.0
-
-        # Têtes + Direction
-        hx, hy = self.tetes[:, 0], self.tetes[:, 1]
-        hx = np.clip(hx, 0, self.grille_l - 1)
-        hy = np.clip(hy, 0, self.grille_h - 1)
-        val_dir = (self.directions + 1) * 0.2
-        self.buffer_etat[ids, 1, hy, hx] = val_dir
-
-        # Corps (dégradé) — vectorisé avec indexation avancée
-        max_len_utile = int(self.longueurs.max())
-        indices_globaux = np.arange(self.n_envs)
-        for seg in range(max_len_utile):
-            # Masque: seulement les envs dont le corps est assez long
-            masque_actif = seg < self.longueurs
-            if not np.any(masque_actif):
-                break
-            envs_actifs = indices_globaux[masque_actif]
-            # Positions du segment 'seg' pour ces envs
-            corps_seg = self.corps[envs_actifs, seg]  # (k, 2)
-            cx = np.clip(corps_seg[:, 0], 0, self.grille_l - 1)
-            cy = np.clip(corps_seg[:, 1], 0, self.grille_h - 1)
-            valeurs = np.asarray(
-                1.0 - (seg / self.longueurs[envs_actifs]), dtype=np.float32
-            )
-            self.buffer_etat[envs_actifs, 0, cy, cx] = valeurs
-
-        # 2. Aplatir les pixels
-        pixels_flat = self.buffer_etat.reshape(self.n_envs, -1)
-
-        # 3. Calculer les features augmentées
         # Distance pomme normalisée
         dist_pomme = (
             np.abs(self.tetes[:, 0] - self.pommes[:, 0])
@@ -304,30 +253,31 @@ class JeuVectorise:
         ) / (self.grille_l + self.grille_h)
 
         # Direction pomme (-1, 0, 1)
-        dir_pomme_x = np.sign(self.pommes[:, 0] - self.tetes[:, 0])
-        dir_pomme_y = np.sign(self.pommes[:, 1] - self.tetes[:, 1])
+        dir_pomme_x = np.sign(self.pommes[:, 0] - self.tetes[:, 0]).astype(np.float32)
+        dir_pomme_y = np.sign(self.pommes[:, 1] - self.tetes[:, 1]).astype(np.float32)
 
         # Dangers (avant, droite, gauche)
         dangers = self._calculer_dangers()
 
-        # Faim normalisée
-        faim = self.etapes_depuis_pomme / 150.0
+        # Faim normalisée (utilise la même formule adaptative que step)
+        famine_timeout = 100 + self.longueurs * 3
+        faim = (self.etapes_depuis_pomme / famine_timeout.astype(np.float32)).astype(np.float32)
 
-        # 4. Combiner tout
-        features = np.stack(
-            [
-                dist_pomme,
-                dir_pomme_x,
-                dir_pomme_y,
-                dangers[:, 0],  # danger avant
-                dangers[:, 1],  # danger droite
-                dangers[:, 2],  # danger gauche
-                faim,
-            ],
-            axis=1,
-        )
+        # Position tête normalisée
+        pos_x = self.tetes[:, 0] / self.grille_l
+        pos_y = self.tetes[:, 1] / self.grille_h
 
-        return np.concatenate([pixels_flat, features], axis=1)
+        return np.stack([
+            dist_pomme,
+            dir_pomme_x,
+            dir_pomme_y,
+            dangers[:, 0],   # danger avant
+            dangers[:, 1],   # danger droite
+            dangers[:, 2],   # danger gauche
+            faim,
+            pos_x,
+            pos_y,
+        ], axis=1).astype(np.float32)
 
     def actions_gloutonnes(self) -> np.ndarray:
         """
