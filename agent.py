@@ -32,18 +32,15 @@ def journal(message):
 # CONFIGURATION (hyperparamètres justifiés)
 # ============================================================================
 NB_ENVIRONNEMENTS = 1000
-TAILLE_BATCH = 256
-MEMOIRE_MAX = 200_000
+TAILLE_BATCH_PQN = 512      # Samples du frame courant par update
 TAUX_APPRENTISSAGE = 0.0003
 GAMMA = 0.97
-FREQ_ENTRAINEMENT = 4
-N_STEP = 3                  # N-step returns : propagation du signal sur 3 steps
-TRANSITIONS_MIN_DEBUT = 5_000  # Attendre ce nb de transitions avant le 1er update
+BLEND_FRAMES = 15_000       # Transition heuristique → safe-random (~10 min)
 
 # Epsilon schedule linéaire
 EPSILON_DEPART = 1.0
 EPSILON_FIN = 0.05
-EPSILON_FRAMES = 50_000     # ~33 min à 25fps — exploration honnête sans heuristique
+EPSILON_FRAMES = 50_000
 
 
 # ============================================================================
@@ -188,14 +185,15 @@ class AgentIA:
             self.modele, lr=TAUX_APPRENTISSAGE, gamma=GAMMA, device=self.device
         )
 
-        # Mémoire efficace (ring buffer)
-        self.memoire = MemoireEfficace(capacite=MEMOIRE_MAX, taille_etat=9)
-        journal("Mémoire initialisée (ring buffer efficace)")
-
         self.logger = JournalDeBord()
         self.record = 0
         self.scores_historique = deque(maxlen=500)
         self.debut_entrainement = time.time()
+
+        # Buffer dédié aux expériences positives (pommes mangées)
+        # Surreprésentées dans chaque batch : 50% pommes, 50% normal
+        # Résout le problème de sparse reward (~1 pomme/256 samples → 128/256)
+        self.memoire_pommes = MemoireEfficace(capacite=20_000, taille_etat=9)
 
         # === TEST SET INDÉPENDANT ===
         # 10 environnements dédiés au test (pas utilisés pour l'entraînement)
@@ -242,16 +240,27 @@ class AgentIA:
     def convertir_etat_tensor(self, etats_numpy):
         return torch.tensor(etats_numpy, dtype=torch.float).to(self.device)
 
-    def memoriser_batch(self, etats, actions, recompenses, etats_suivants, finis):
-        """Stocke les expériences en batch massif sans boucle Python."""
-        self.memoire.stocker_batch(etats, actions, recompenses, etats_suivants, finis)
+    def entrainer_on_policy(self, etats, actions, recompenses, etats_suivants, finis):
+        """
+        PQN: entraînement on-policy sur le batch courant.
+        Pas de replay buffer → pas de distribution mismatch.
+        Oversampling des pommes via memoire_pommes.
+        """
+        n = len(etats)
+        n_sample = min(n, TAILLE_BATCH_PQN)
+        indices = np.random.choice(n, n_sample, replace=False)
 
-    def entrainer_memoire(self, n_step=1):
-        if len(self.memoire) > TAILLE_BATCH:
-            etats, actions, rewards, next_states, dones = self.memoire.echantillonner(TAILLE_BATCH)
-            self.entraineur.etape_d_apprentissage(
-                etats, actions, rewards, next_states, dones, n_step=n_step
-            )
+        if len(self.memoire_pommes) >= 128:
+            e2, a2, r2, n2, d2 = self.memoire_pommes.echantillonner(128)
+            E = np.concatenate([etats[indices], e2])
+            A = np.concatenate([actions[indices], a2])
+            R = np.concatenate([recompenses[indices], r2])
+            N = np.concatenate([etats_suivants[indices], n2])
+            D = np.concatenate([finis[indices], d2])
+        else:
+            E, A, R, N, D = etats[indices], actions[indices], recompenses[indices], etats_suivants[indices], finis[indices]
+
+        self.entraineur.etape_d_apprentissage(E, A, R, N, D)
 
     def moyenne_mobile(self, n=100):
         """Moyenne sur les N dernières parties."""
@@ -286,14 +295,6 @@ def lancer_entrainement():
     derniere_eval_test = 0
 
     etats = env.recuperer_etats()
-
-    # Buffers N-step (deque de taille N_STEP par frame)
-    from collections import deque as deque_nstep
-    nstep_etats = deque_nstep(maxlen=N_STEP)
-    nstep_actions = deque_nstep(maxlen=N_STEP)
-    nstep_rewards = deque_nstep(maxlen=N_STEP)
-    nstep_finis = deque_nstep(maxlen=N_STEP)
-    nstep_etats_suivants = deque_nstep(maxlen=N_STEP)
 
     journal(f"Démarrage avec {NB_ENVIRONNEMENTS} environnements parallèles")
     journal(
@@ -366,47 +367,39 @@ def lancer_entrainement():
             prediction = agent.modele(etat_tensor)
         agent.modele.train()
 
-        # Epsilon-greedy avec exploration sûre.
-        # On évite les morts immédiates (mur/corps) pour générer des épisodes plus longs
-        # et plus de signaux positifs (pommes trouvées par hasard).
-        # PAS d'heuristique : le réseau apprend de sa propre distribution d'états.
         masque_exploration = np.random.random(NB_ENVIRONNEMENTS) < agent.epsilon
         actions_modele = torch.argmax(prediction, dim=1).cpu().numpy()
 
-        # Exploration : actions aléatoires qui n'entraînent pas de mort immédiate
-        actions_aleatoires = env.actions_aleatoires_sures()
+        # Transition progressive heuristique → safe-random sur BLEND_FRAMES
+        # p=1.0 au début (100% heuristique), p=0.0 à la fin (100% safe-random)
+        # Évite l'effondrement brutal et laisse le temps au réseau d'apprendre
+        p_heuristic = max(0.0, 1.0 - agent.nb_frames / BLEND_FRAMES)
+        if p_heuristic > 0:
+            masque_h = np.random.random(NB_ENVIRONNEMENTS) < p_heuristic
+            actions_h = env.actions_gloutonnes()
+            actions_s = env.actions_aleatoires_sures()
+            actions_aleatoires = np.where(masque_h, actions_h, actions_s)
+        else:
+            actions_aleatoires = env.actions_aleatoires_sures()
 
         coups_finaux = np.where(masque_exploration, actions_aleatoires, actions_modele)
 
         # Step
         etats_suivants, recompenses, finis, scores = env.step(coups_finaux)
 
-        # N-step: accumuler les transitions
-        nstep_etats.append(etats.copy())
-        nstep_actions.append(coups_finaux.copy())
-        nstep_rewards.append(recompenses.copy())
-        nstep_finis.append(finis.copy())
-        nstep_etats_suivants.append(etats_suivants.copy())
-
-        # Stocker la transition N-step une fois le buffer plein
-        if len(nstep_etats) == N_STEP:
-            gamma_returns = nstep_rewards[0].copy()
-            cumulative_done = nstep_finis[0].copy()
-            for i in range(1, N_STEP):
-                gamma_returns += (GAMMA ** i) * nstep_rewards[i] * (~cumulative_done)
-                cumulative_done = cumulative_done | nstep_finis[i]
-            agent.memoriser_batch(
-                nstep_etats[0],
-                nstep_actions[0],
-                gamma_returns,
-                nstep_etats_suivants[-1],
-                cumulative_done,
+        # Stocker les pommes dans le buffer dédié (oversampling food)
+        masque_positif = recompenses > 0.5
+        if np.any(masque_positif):
+            agent.memoire_pommes.stocker_batch(
+                etats[masque_positif],
+                coups_finaux[masque_positif],
+                recompenses[masque_positif],
+                etats_suivants[masque_positif],
+                finis[masque_positif],
             )
 
-        # Entraîner après le warmup initial
-        if len(agent.memoire) >= TRANSITIONS_MIN_DEBUT:
-            if agent.nb_frames % FREQ_ENTRAINEMENT == 0:
-                agent.entrainer_memoire(n_step=N_STEP)
+        # PQN: entraîner directement sur le frame courant (on-policy)
+        agent.entrainer_on_policy(etats, coups_finaux, recompenses, etats_suivants, finis)
 
         etats = etats_suivants
         agent.nb_frames += 1
@@ -480,8 +473,11 @@ def lancer_entrainement():
             if len(agent.scores_historique) > 0:
                 moy = agent.moyenne_mobile(100)
 
-                # Ajustement LR
-                agent.entraineur.scheduler.step(moy)
+                # Ajustement LR — seulement après l'exploration
+                # Évite de réduire le LR pendant que Moy100 est bloquée à 0.1
+                # (ce qui est NORMAL à epsilon élevé, pas un signe de stagnation)
+                if agent.epsilon < 0.2:
+                    agent.entraineur.scheduler.step(moy)
 
                 donnees_graphique.append(moy)
                 score_cumule += moy
