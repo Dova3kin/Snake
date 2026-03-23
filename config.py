@@ -36,12 +36,14 @@ class ConfigEntrainement:
     # === EXPLORATION ===
     epsilon_depart: float = 1.0
     epsilon_fin: float = 0.05
-    epsilon_frames: int = 1_000_000     # Steps de simulation pour atteindre epsilon_fin
-                                    # Indépendant du nombre d'envs parallèles
+    epsilon_frames: int = 50_000        # Steps de simulation pour atteindre epsilon_fin
+                                    # ~33 min à 25fps — exploration honnête sans heuristique
     taux_exploration_aleatoire: float = 0.02  # Exploration pure
 
     # === ENTRAÎNEMENT ===
     freq_entrainement: int = 8          # Entraîner toutes les N frames
+    n_step: int = 3                     # N-step returns : propagation du signal sur 3 steps
+    transitions_min_debut: int = 5_000  # Attendre ce nb de transitions avant le 1er update
     eval_intervalle: int = 5_000        # Éval toutes les N parties
     famine_base: int = 100              # Base du timeout de famine
     famine_par_case: int = 3            # Steps supplémentaires par case de longueur
