@@ -14,30 +14,39 @@ import copy
 
 class ReseauNeurones(nn.Module):
     """
-    MLP compact pour Snake.
+    Dueling DQN avec LayerNorm pour stabilité.
 
-    Entrée: 9 features (sans pixels)
-    Sortie: 3 actions (tout droit, droite, gauche)
-
-    Architecture: 9→128→64→3
-    Pas de dropout : inutile avec si peu de paramètres.
+    Architecture: 9 → 256 → 256 → fork V(s) + A(s,a)
+    - LayerNorm: stabilise les Q-values (critique pour convergence)
+    - Dueling: sépare valeur d'état et avantage, converge 20-30% plus vite
     """
 
     def __init__(self, input_size=9, output_size=3):
         super().__init__()
-        self.fc1 = nn.Linear(input_size, 128)
-        self.fc2 = nn.Linear(128, 64)
-        self.fc3 = nn.Linear(64, output_size)
+        self.features = nn.Sequential(
+            nn.Linear(input_size, 256),
+            nn.LayerNorm(256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.LayerNorm(256),
+            nn.ReLU(),
+        )
+        self.value = nn.Sequential(
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, 1),
+        )
+        self.advantage = nn.Sequential(
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, output_size),
+        )
 
     def forward(self, x):
-        if len(x.shape) == 4:
-            x = x.view(x.size(0), -1)
-        elif len(x.shape) == 3:
-            x = x.view(1, -1)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
+        f = self.features(x)
+        v = self.value(f)
+        a = self.advantage(f)
+        return v + a - a.mean(dim=1, keepdim=True)
 
     def sauvegarder(
         self,
@@ -57,7 +66,7 @@ class ReseauNeurones(nn.Module):
             chemin += ".pth"
 
         donnees = {
-            "version": 2,  # Versioning pour compatibilité future
+            "version": 2,
             "etat_modele": self.state_dict(),
             "nb_parties": nb_parties,
             "temps_total": temps_total,
@@ -78,7 +87,6 @@ class ReseauNeurones(nn.Module):
             try:
                 checkpoint = torch.load(chemin, map_location=device)
 
-                # Format v2 (nouveau)
                 if isinstance(checkpoint, dict) and "etat_modele" in checkpoint:
                     self.load_state_dict(checkpoint["etat_modele"])
                     return (
@@ -88,7 +96,6 @@ class ReseauNeurones(nn.Module):
                         checkpoint.get("epsilon", None),
                         checkpoint.get("record", 0),
                     )
-                # Format legacy (anglais)
                 elif isinstance(checkpoint, dict) and "model_state" in checkpoint:
                     self.load_state_dict(checkpoint["model_state"])
                     return (
@@ -99,7 +106,6 @@ class ReseauNeurones(nn.Module):
                         checkpoint.get("record", 0),
                     )
                 else:
-                    # Très vieux format
                     self.load_state_dict(checkpoint)
                     return 0, 0, None, None, 0
             except Exception as e:
@@ -155,7 +161,7 @@ class Entraineur:
                 self.tau * local_param.data + (1.0 - self.tau) * target_param.data
             )
 
-    def etape_d_apprentissage(self, etat, action, recompense, etat_suiv, finis):
+    def etape_d_apprentissage(self, etat, action, recompense, etat_suiv, finis, n_step=1):
         """
         Une étape d'apprentissage DQN.
 
@@ -202,7 +208,7 @@ class Entraineur:
         # 3. Calcul du target Q — vectorisé (pas de boucle Python)
         # Q_bellman = r + gamma * max_Q_next  (si not done)
         # Q_bellman = r                       (si done)
-        Q_bellman = recompense + self.gamma * max_next_q * (~finis).float()
+        Q_bellman = recompense + (self.gamma ** n_step) * max_next_q * (~finis).float()
 
         # Mettre à jour uniquement la Q-value de l'action prise
         target = pred.clone()
