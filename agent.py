@@ -47,7 +47,8 @@ FREQ_ENTRAINEMENT = 8
 # Epsilon: schedule linéaire (plus prévisible que decay exponentiel)
 EPSILON_DEPART = 1.0
 EPSILON_FIN = 0.05
-EPSILON_FRAMES = 1_000_000  # Steps pour atteindre epsilon_fin (indépendant du nb d'envs)
+EPSILON_FRAMES = 50_000  # Steps pour atteindre epsilon_fin (indépendant du nb d'envs)
+                         # ~28 min à 30 frames/sec avec 1000 envs
 
 
 # ============================================================================
