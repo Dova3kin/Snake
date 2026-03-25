@@ -27,10 +27,10 @@ class TestMemoireEfficace:
     def test_stockage_simple(self):
         """On peut stocker et récupérer des expériences."""
         memoire = MemoireEfficace(capacite=100)
-        etats = np.zeros((1, 9))
+        etats = np.zeros((1, 26))
         actions = np.array([0])
         recompenses = np.array([1.0])
-        etats_suivants = np.ones((1, 9))
+        etats_suivants = np.ones((1, 26))
         finis = np.array([False])
         memoire.stocker_batch(etats, actions, recompenses, etats_suivants, finis)
         assert len(memoire) == 1
@@ -39,24 +39,24 @@ class TestMemoireEfficace:
         """La taille augmente jusqu'à la capacité."""
         memoire = MemoireEfficace(capacite=10)
         for i in range(7):
-            memoire.stocker_batch(np.zeros((1,9)), np.array([0]), np.array([0.0]), np.zeros((1,9)), np.array([False]))
+            memoire.stocker_batch(np.zeros((1,26)), np.array([0]), np.array([0.0]), np.zeros((1,26)), np.array([False]))
         assert len(memoire) == 7
 
     def test_ring_buffer_ne_depasse_pas_capacite(self):
         """Stocker plus que la capacité se comporte en ring buffer."""
         memoire = MemoireEfficace(capacite=5)
         for i in range(10):
-            memoire.stocker_batch(np.zeros((1,9)), np.array([0]), np.array([0.0]), np.zeros((1,9)), np.array([False]))
+            memoire.stocker_batch(np.zeros((1,26)), np.array([0]), np.array([0.0]), np.zeros((1,26)), np.array([False]))
         # Taille plafonnée à la capacité
         assert len(memoire) == 5
 
     def test_echantillonnage_taille_correcte(self):
         """echantillonner() retourne le bon nombre d'éléments."""
         memoire = MemoireEfficace(capacite=100)
-        etats = np.zeros((50, 9))
+        etats = np.zeros((50, 26))
         actions = np.zeros(50, dtype=int)
         recompenses = np.zeros(50, dtype=float)
-        etats_suivants = np.zeros((50, 9))
+        etats_suivants = np.zeros((50, 26))
         finis = np.zeros(50, dtype=bool)
         memoire.stocker_batch(etats, actions, recompenses, etats_suivants, finis)
 
@@ -67,15 +67,15 @@ class TestMemoireEfficace:
     def test_echantillonnage_elements_valides(self):
         """Les éléments échantillonnés sont des tuples d'arrays numpy."""
         memoire = MemoireEfficace(capacite=50)
-        etats = np.zeros((20, 9))
+        etats = np.zeros((20, 26))
         actions = np.zeros(20, dtype=int)
         recompenses = np.ones(20, dtype=float)
-        etats_suivants = np.ones((20, 9))
+        etats_suivants = np.ones((20, 26))
         finis = np.zeros(20, dtype=bool)
         memoire.stocker_batch(etats, actions, recompenses, etats_suivants, finis)
 
         etats_b, actions_b, rec_b, etats_suiv_b, finis_b = memoire.echantillonner(10)
-        assert etats_b.shape == (10, 9)
+        assert etats_b.shape == (10, 26)
         assert actions_b.shape == (10,)
         assert rec_b.shape == (10,)
 
@@ -83,7 +83,7 @@ class TestMemoireEfficace:
         """Après overflow, les nouvelles données remplacent les anciennes."""
         memoire = MemoireEfficace(capacite=3)
         for i in range(5):
-             memoire.stocker_batch(np.zeros((1,9)), np.array([i]), np.array([0.0]), np.zeros((1,9)), np.array([False]))
+             memoire.stocker_batch(np.zeros((1,26)), np.array([i]), np.array([0.0]), np.zeros((1,26)), np.array([False]))
 
         # La position courante est 5 % 3 = 2
         assert memoire.position == 2
@@ -168,9 +168,9 @@ class TestConversionEtat:
         import unittest.mock as mock
         with mock.patch("agent.Dashboard"), mock.patch("agent.JournalDeBord"):
             agent = AgentIA()
-            etats = np.random.randn(4, 9).astype(np.float32)
+            etats = np.random.randn(4, 26).astype(np.float32)
             tensor = agent.convertir_etat_tensor(etats)
-            assert tensor.shape == (4, 9)
+            assert tensor.shape == (4, 26)
             assert tensor.dtype == torch.float32
 
     def test_convertir_etat_tensor_valeurs(self):
@@ -179,6 +179,6 @@ class TestConversionEtat:
         import unittest.mock as mock
         with mock.patch("agent.Dashboard"), mock.patch("agent.JournalDeBord"):
             agent = AgentIA()
-            etats = np.ones((2, 9), dtype=np.float32)
+            etats = np.ones((2, 26), dtype=np.float32)
             tensor = agent.convertir_etat_tensor(etats)
             assert torch.all(tensor == 1.0)

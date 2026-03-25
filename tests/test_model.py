@@ -26,26 +26,26 @@ from model import ReseauNeurones, Entraineur
 class TestReseauNeurones:
     def test_forward_shape_batch(self, modele):
         """Forward avec batch: shape = (batch, 3)."""
-        x = torch.randn(8, 9)
+        x = torch.randn(8, 26)
         y = modele(x)
         assert y.shape == (8, 3)
 
     def test_forward_shape_single(self, modele):
         """Forward avec un seul état: shape = (1, 3)."""
-        x = torch.randn(1, 9)
+        x = torch.randn(1, 26)
         y = modele(x)
         assert y.shape == (1, 3)
 
     def test_forward_4d_input(self, modele):
         """Forward avec 2 etats aplatis de taille 9 retourne shape (2,3)."""
         # Entrée correcte: 2 etats aplatis de taille 9
-        x = torch.randn(2, 9)
+        x = torch.randn(2, 26)
         y = modele(x)
         assert y.shape == (2, 3)
 
     def test_forward_sortie_numerique(self, modele):
         """La sortie ne contient pas de NaN ou Inf."""
-        x = torch.randn(4, 9)
+        x = torch.randn(4, 26)
         y = modele(x)
         assert not torch.any(torch.isnan(y))
         assert not torch.any(torch.isinf(y))
@@ -63,7 +63,7 @@ class TestReseauNeurones:
                 modele.sauvegarder(nom_fichier=nom, nb_parties=100, record=5)
 
                 # Charger dans un nouveau modèle
-                modele2 = ReseauNeurones(input_size=9, output_size=3)
+                modele2 = ReseauNeurones(input_size=26, output_size=3)
                 result = modele2.charger(nom_fichier=nom + ".pth", device="cpu")
 
                 assert result is not None
@@ -85,7 +85,7 @@ class TestReseauNeurones:
     def test_mode_eval_desactive_dropout(self, modele):
         """En mode eval, des appels répétés donnent le même résultat."""
         modele.eval()
-        x = torch.randn(1, 9)
+        x = torch.randn(1, 26)
         with torch.no_grad():
             y1 = modele(x)
             y2 = modele(x)
@@ -126,10 +126,10 @@ class TestEntraineur:
     def test_etape_apprentissage_retourne_loss(self, entraineur):
         """etape_d_apprentissage() retourne une loss numérique positive."""
         batch_size = 4
-        etats = [np.random.randn(9).astype(np.float32) for _ in range(batch_size)]
+        etats = [np.random.randn(26).astype(np.float32) for _ in range(batch_size)]
         actions = [0, 1, 2, 0]
         recompenses = [0.1, -1.0, 1.0, -0.001]
-        etats_suivants = [np.random.randn(9).astype(np.float32) for _ in range(batch_size)]
+        etats_suivants = [np.random.randn(26).astype(np.float32) for _ in range(batch_size)]
         finis = [False, True, False, False]
 
         loss = entraineur.etape_d_apprentissage(
@@ -147,10 +147,10 @@ class TestEntraineur:
 
         # Batch simple et cohérent
         batch_size = 16
-        etats = [np.zeros(9, dtype=np.float32) for _ in range(batch_size)]
+        etats = [np.zeros(26, dtype=np.float32) for _ in range(batch_size)]
         actions = [0] * batch_size
-        recompenses = [1.0] * batch_size  # Tous positifs et cohérents
-        etats_suivants = [np.zeros(9, dtype=np.float32) for _ in range(batch_size)]
+        recompenses = [1.0] * batch_size  # Restauration de la valeur 1.0 nécessaire au test
+        etats_suivants = [np.zeros(26, dtype=np.float32) for _ in range(batch_size)]
         finis = [False] * batch_size
 
         pertes = []
@@ -179,7 +179,7 @@ class TestModeModele:
         import numpy as np
 
         modele.train()  # Forcer mode train
-        etat = torch.tensor(np.random.rand(1, 9), dtype=torch.float)
+        etat = torch.tensor(np.random.rand(1, 26), dtype=torch.float)
 
         # Simuler ce que AgentIA.convertir_etat_tensor + inférence devrait faire
         modele.eval()
@@ -208,10 +208,10 @@ class TestDoubleDQN:
         for p in entraineur.modele.parameters():
             p.data.fill_(1.0)   # modèle → valeurs élevées
 
-        etat      = np.random.rand(4, 9).astype(np.float32)
+        etat      = np.random.rand(4, 26).astype(np.float32)
         action    = np.array([0, 1, 2, 0])
         recompense = np.array([1.0, 0.0, -1.0, 0.5])
-        etat_suiv = np.random.rand(4, 9).astype(np.float32)
+        etat_suiv = np.random.rand(4, 26).astype(np.float32)
         finis     = np.array([False, False, False, True])
 
         # Ne doit pas lever d'exception et doit retourner une loss
@@ -227,10 +227,10 @@ class TestDoubleDQN:
         import torch
         import numpy as np
 
-        etat      = np.zeros((2, 9), dtype=np.float32)
+        etat      = np.zeros((2, 26), dtype=np.float32)
         action    = np.array([0, 1])
         recompense = np.array([-1.0, 1.0])
-        etat_suiv = np.zeros((2, 9), dtype=np.float32)
+        etat_suiv = np.zeros((2, 26), dtype=np.float32)
         finis     = np.array([True, True])  # Deux états terminaux
 
         loss = entraineur.etape_d_apprentissage(

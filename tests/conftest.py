@@ -46,7 +46,7 @@ def modele():
     import os
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from model import ReseauNeurones
-    return ReseauNeurones(input_size=9, output_size=3)
+    return ReseauNeurones(input_size=26, output_size=3)
 
 
 @pytest.fixture
