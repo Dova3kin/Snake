@@ -54,7 +54,7 @@ class MemoireEfficace:
     Utilise des arrays NumPy purs pour zéro surcharge Python.
     """
 
-    def __init__(self, capacite, taille_etat=26):
+    def __init__(self, capacite, taille_etat=9):
         self.capacite = capacite
         self.etats = np.zeros((capacite, taille_etat), dtype=np.float32)
         self.actions = np.zeros(capacite, dtype=np.int32)
@@ -179,7 +179,7 @@ class AgentIA:
         journal(f"Device: {self.device}")
 
         # Réseau de neurones (MLP compact)
-        # Input: 26 features enrichies (flood fill, one-hot direction, etc.)
+        # Input: 26 features
         self.modele = ReseauNeurones(input_size=26, output_size=3).to(self.device)
         self.entraineur = Entraineur(
             self.modele, lr=TAUX_APPRENTISSAGE, gamma=GAMMA, device=self.device
@@ -188,13 +188,12 @@ class AgentIA:
         self.logger = JournalDeBord()
         self.record = 0
         self.scores_historique = deque(maxlen=500)
-        self.scores_tous = []          # historique complet pour le graphique global
         self.debut_entrainement = time.time()
 
         # Buffer dédié aux expériences positives (pommes mangées)
         # Surreprésentées dans chaque batch : 50% pommes, 50% normal
         # Résout le problème de sparse reward (~1 pomme/256 samples → 128/256)
-        self.memoire_pommes = MemoireEfficace(capacite=20_000, taille_etat=26)
+        self.memoire_pommes = MemoireEfficace(capacite=20_000, taille_etat=9)
 
         # === TEST SET INDÉPENDANT ===
         # 10 environnements dédiés au test (pas utilisés pour l'entraînement)
@@ -285,8 +284,9 @@ def lancer_entrainement():
 
     t0 = time.time()
     frames = 0
-    donnees_graphique = deque(maxlen=2000)
-    moyennes_graphique = deque(maxlen=2000)
+    donnees_graphique = []
+    moyennes_graphique = []
+    score_cumule = 0
     dernier_update_graph = 0
     last_screen_time = time.time()
 
@@ -411,7 +411,6 @@ def lancer_entrainement():
             scores_morts = scores[finis]
             for s in scores_morts:
                 agent.scores_historique.append(s)
-                agent.scores_tous.append(int(s))
 
         max_actuel = np.max(scores)
         if max_actuel > agent.record:
@@ -459,16 +458,13 @@ def lancer_entrainement():
         # Rendu visuel
         if dashboard.state == "RUNNING":
             surface_jeu = visu.dessiner()
-            score_agent0 = int(env.scores[0])
-            dashboard.update_game(surface_jeu, score_actuel=score_agent0)
-            dashboard.update_nn(etats[0])
+            dashboard.update_game(surface_jeu)
 
             dashboard.update_info(
                 agent.nb_parties,
                 time.time() - agent.debut_entrainement,
                 agent.epsilon,
                 agent.record,
-                pommes_total=len(agent.scores_tous),
             )
 
         # Graphiques
@@ -477,17 +473,21 @@ def lancer_entrainement():
             if len(agent.scores_historique) > 0:
                 moy = agent.moyenne_mobile(100)
 
+                # Ajustement LR — seulement après l'exploration
+                # Évite de réduire le LR pendant que Moy100 est bloquée à 0.1
+                # (ce qui est NORMAL à epsilon élevé, pas un signe de stagnation)
                 if agent.epsilon < 0.2:
                     agent.entraineur.scheduler.step(moy)
 
                 donnees_graphique.append(moy)
-                moy_globale = sum(donnees_graphique) / len(donnees_graphique)
+                score_cumule += moy
+                moy_globale = score_cumule / len(donnees_graphique)
                 moyennes_graphique.append(moy_globale)
 
                 dashboard.update_plots(
-                    list(donnees_graphique), list(moyennes_graphique), agent.record
+                    donnees_graphique, moyennes_graphique, agent.record
                 )
-                dashboard.update_global_plot(agent.scores_tous)
+                dashboard.update_global_plot(list(agent.scores_historique))
             dashboard.update()
         else:
             dashboard.update()
