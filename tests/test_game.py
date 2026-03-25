@@ -83,9 +83,9 @@ class TestReset:
 
 class TestEtats:
     def test_forme_etats_correcte(self, petit_env):
-        """recuperer_etats() retourne la bonne forme : 9 features compactes."""
+        """recuperer_etats() retourne la bonne forme : 26 features."""
         etats = petit_env.recuperer_etats()
-        assert etats.shape == (4, 9)
+        assert etats.shape == (4, 26)
 
     def test_etats_normalises(self, petit_env):
         """Les features sont dans les bonnes plages."""
@@ -219,12 +219,12 @@ class TestFamineAdaptative:
 
 
 class TestEtatEnrichi:
-    def test_forme_etat_9_features(self, petit_env):
-        """recuperer_etats() doit retourner 9 features (plus de pixels)."""
+    def test_forme_etat_26_features(self, petit_env):
+        """recuperer_etats() doit retourner 26 features enrichies."""
         etats = petit_env.recuperer_etats()
-        assert etats.shape == (4, 9), (
-            f"Shape = {etats.shape}, attendu (4, 9). "
-            f"Les 3072 pixels doivent être supprimés."
+        assert etats.shape == (4, 26), (
+            f"Shape = {etats.shape}, attendu (4, 26). "
+            f"Le vecteur d'état doit inclure flood fill, one-hot direction, etc."
         )
 
     def test_position_tete_normalisee(self, env_simple):
